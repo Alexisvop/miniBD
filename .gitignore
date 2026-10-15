@@ -5,3 +5,5 @@
 core
 *.o
 *.a
+/*.md
+#!README.md
