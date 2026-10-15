@@ -1,192 +1,248 @@
 # MiniDB
 
-An educational relational database engine being built from scratch in C17.
-The project explores systems programming and database internals as preparation
-for database engine engineering internships, including Oracle MDC. It does not
-use SQLite or another database backend and is not a production database.
+An educational relational database engine built from scratch in C17. The project
+explores systems programming and database internals as preparation for database
+engine engineering internships, including Oracle MDC. It does not use SQLite or
+another database backend and is not a production database.
 
-**Current milestone: phase 1 — CLI and parser.** No records are stored, no
-database file is opened, and no queries are executed yet. The later milestones
-in [the specification](Proyect_espec.md) require separate implementation steps.
+**Current milestone: phase 2 — persistent sequential storage.** INSERT, SELECT,
+and SELECT_ALL now operate on a binary database file. Records persist after a
+successful normal close and can be retrieved in a new process. The index and
+later query operations remain future work.
 
 ## Implemented
 
-- Interactive REPL with `.help`, `.exit`, and clean end-of-file handling.
-- Parsing of `INSERT`, `SELECT`, and `SELECT_ALL` into typed commands.
-- Unsigned 32-bit IDs, validated UTF-8 names, and bounded ages.
-- Recovery after malformed commands, oversized lines, and embedded NUL bytes.
-- Explicit stream error handling and diagnostics on standard error.
-- C17 build with strict warnings, CTest tests, and optional ASan/UBSan.
+- Interactive REPL with `.help`, `.exit`, EOF handling and bounded input.
+- Validated INSERT, SELECT and SELECT_ALL commands, with errors for duplicate
+  IDs and missing records.
+- Explicit 70-byte record serialization, independent of C padding/byte order.
+- Versioned little-endian file format with 4096-byte metadata and data pages.
+- Pager with stable cached buffers, dirty tracking, complete reads/writes and
+  file synchronization at normal close.
+- Structural validation on open, including malformed UTF-8, truncated files,
+  unsupported versions, invalid counts/types/padding and duplicate stored IDs.
+- Strict C17 compilation, CTest regression/integration tests and ASan/UBSan builds.
 
 ## Build on Arch Linux
 
-Required tools: GCC, CMake 3.16 or newer, and Ninja (or Make). GDB is optional.
-There are no third-party runtime libraries; the CLI uses the C library and
-POSIX `isatty` to detect interactive terminals.
+Required: GCC, CMake 3.16 or newer and Ninja (or Make). GDB is optional.
+There are no third-party runtime libraries; production uses the C library and
+POSIX file and terminal interfaces.
 
-Install missing development tools if needed:
+Install missing tools if needed:
 
 ```sh
 sudo pacman -S --needed base-devel cmake ninja gdb
 ```
 
-From this directory (commands also work in Fish):
+From the project directory (these commands also work in Fish):
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ctest --test-dir build --output-on-failure
-./build/minidb
+./build/minidb database.db
 ```
 
-The executable runs directly from the build directory; no system installation
-is needed. To use Make instead, choose `-G "Unix Makefiles"` in a separate build
-directory. The warning flags target GCC and Clang on POSIX systems.
+The executable runs from the build directory; no system installation is needed.
+To use Make, choose `-G "Unix Makefiles"` in a separate build directory. Warning
+flags target GCC and Clang on POSIX systems. Build artifacts and `*.db` files
+are ignored by Git.
 
-## Usage
+## Usage and persistence
+
+The database path is now required. A missing file or an existing zero-byte file
+is initialized; a nonempty invalid file is rejected without being rewritten.
+`--help` displays usage without opening any database.
+
+First session:
 
 ```text
 minidb> INSERT 1 "Alexis" 21
-PARSED: INSERT 1 | Alexis | 21 (storage not implemented)
-minidb> SELECT 1
-PARSED: SELECT 1 (storage not implemented)
-minidb> SELECT_ALL
-PARSED: SELECT_ALL (storage not implemented)
-minidb> .help
-...
+OK: 1 row inserted
+minidb> INSERT 2 "Carlos" 22
+OK: 1 row inserted
 minidb> .exit
 ```
 
-`./build/minidb database.db` accepts the future database path and explicitly
-reports that the path is not opened or created in this phase. `--help` shows
-command-line usage. There are no persistence or duplicate-key checks yet.
+Reopen with `./build/minidb database.db`:
 
-The language is deliberately small and is **not SQL**:
+```text
+minidb> SELECT 1
+1 | Alexis | 21
+minidb> SELECT_ALL
+1 | Alexis | 21
+2 | Carlos | 22
+minidb> INSERT 1 "Duplicate" 99
+ERROR: duplicate ID
+minidb> SELECT 999
+ERROR: record not found
+minidb> .exit
+```
 
-| Input | Rules |
-| --- | --- |
-| `INSERT <id> "<name>" <age>` | All three fields are required. |
-| `SELECT <id>` | Exactly one ID is required. |
-| `SELECT_ALL` | No arguments. |
-| `.help`, `.exit` | No arguments. |
-| ID | Decimal digits only, from 0 to 4294967295; leading zeroes are accepted. |
-| Name | 1–64 UTF-8 bytes excluding the terminator, enclosed in double quotes. Spaces are preserved. |
-| Age | Decimal digits only, from 0 to 150 inclusive. |
+SELECT_ALL follows **insertion order**, not ascending ID. Searches and duplicate
+checks scan sequentially; no index exists yet. The two-session example above
+was executed during phase 2 verification and produced an 8192-byte database
+(one metadata page and one data page).
 
-Commands are case-sensitive. Whitespace separates tokens; leading/trailing
-whitespace and blank lines are accepted. Names cannot contain ASCII controls,
-DEL, or double quotes. There is no escape syntax; a backslash is a literal
-character. Invalid UTF-8, signed numbers, decimals, extra arguments, and SQL
-semicolons are rejected. The 64-byte name limit counts bytes, not characters:
-32 repetitions of `é` occupy 64 bytes.
-
-Each input line can contain at most 4096 bytes before LF (CR counts toward
-that limit). Longer lines and lines containing NUL are discarded in full.
-EOF also terminates a final command without a newline. Ctrl-D at an empty
-terminal prompt ends the session. Ctrl-C retains the operating system default.
+`OK` means the row was accepted in memory. `.exit` or EOF writes dirty pages,
+then calls `fsync` and closes the file. **Check the exit status**: a write, sync
+or close failure returns 1 and may leave an incomplete file. Ctrl-C or unexpected
+termination is not a normal close and can lose changes. There are no crash or
+power-loss guarantees.
 
 Piped input suppresses the banner and prompt:
 
 ```sh
-printf 'INSERT 1 "Alexis" 21\nSELECT 1\n.exit\n' | ./build/minidb
+printf 'INSERT 1 "Alexis" 21\n.exit\n' | ./build/minidb example.db
+printf 'SELECT 1\n.exit\n' | ./build/minidb example.db
 ```
 
-Invalid commands print `ERROR` and allow the session to continue. Exit status
-is 0 for `.exit`/EOF, including sessions with invalid commands; it is 1 for
-invalid process arguments or detected I/O failures. This is not a batch query
-runner with transaction or fail-fast semantics.
+Use a new `example.db` for this example; re-running INSERT against the same file
+correctly rejects the duplicate ID. EOF also processes and saves a final command
+without a trailing newline.
 
-## Architecture
+## Command grammar
+
+This is a small case-sensitive language, **not SQL**.
+
+| Input | Rules |
+| --- | --- |
+| `INSERT <id> "<name>" <age>` | All three fields required; ID must be unique. |
+| `SELECT <id>` | Exactly one ID; missing records return a controlled error. |
+| `SELECT_ALL` | No arguments; rows in insertion order. |
+| `.help`, `.exit` | No arguments. |
+| ID | Decimal digits, 0..4294967295; leading zeroes accepted. |
+| Name | 1–64 UTF-8 bytes, enclosed in double quotes; spaces preserved. |
+| Age | Decimal digits, 0..150 inclusive. |
+
+Whitespace separates tokens. Leading/trailing whitespace and blank lines are
+accepted. Names cannot contain ASCII controls, DEL or double quotes. There is no
+escape syntax; backslash is literal. Malformed UTF-8, signed/decimal numbers,
+extra arguments and SQL semicolons are rejected. The name limit is in bytes:
+32 repetitions of `é` occupy 64 bytes.
+
+Input is limited to 4096 bytes before LF (CR counts toward that limit). Oversized
+lines and lines containing NUL are consumed completely and rejected so the next
+line can still be processed. Ctrl-D at an empty terminal prompt ends the session.
+
+Invalid commands, duplicate IDs, missing records and capacity errors print
+`ERROR` and allow further commands. `.exit`/EOF normally return 0 even if such
+recoverable errors occurred. Invalid process arguments, opening failures,
+allocation failures and fatal I/O/storage errors return 1. This is not a
+transactional or fail-fast batch query runner.
+
+## Storage architecture and format
 
 ```text
-main (arguments and terminal detection)
-  -> REPL (bounded input, diagnostics, help, exit, parse preview)
-       -> parser (text -> Command + ParseStatus)
-            -> Record (in-memory fields only)
+main -> REPL -> Parser -> Command
+          |
+          +-> Executor -> Storage -> Pager -> database file
+                            |
+                            +-> Record codec + little-endian helpers
 ```
 
-The parser performs no I/O or allocation. The REPL borrows its streams, which
-also allows integration tests to supply temporary files. There is no executor,
-pager, storage engine, or B+ tree yet. See
-[architecture and ownership](docs/architecture.md) and the
-[engineering log](docs/engineering-log.md) for the rationale and next steps.
+The parser performs no I/O or allocation. The executor maps validated commands
+to storage operations. Storage owns record placement, uniqueness and format
+validation; Pager owns descriptors, raw pages, cache buffers and synchronization.
 
-## Tests and sanitizers
+| Property | Version 1 disk format |
+| --- | --- |
+| Metadata | Page 0: magic, version, page size/count, row count, reserved root ID and type |
+| Data | Pages 1 onward: 16-byte header, 58 record slots, 20-byte tail padding |
+| Record | 4-byte ID, 1-byte age, 1-byte name length, 64-byte name payload |
+| Integer order | Little-endian |
+| File limit | 4096 total pages, 16 MiB, 237510 records |
+| Cache | No eviction; at most 16 MiB of page payloads plus bookkeeping |
 
-CTest runs three suites:
+Names are explicitly length-prefixed and zero-padded on disk. No native `Record`
+structure is written directly. Page types and a format version leave room for
+future extensions; a B+ tree format may require migration. See the complete
+[offset tables and sync contract](docs/storage-format.md),
+[architecture and ownership](docs/architecture.md), and
+[engineering log](docs/engineering-log.md).
 
-- `parser`: command types and values, missing/extra arguments, numeric overflow,
-  64/65-byte names, multibyte UTF-8 boundaries, invalid encodings, and preservation
-  of the output object on errors.
-- `repl`: help/exit, recovery, CRLF, EOF, interactive prompts, exact input limit,
-  oversized input, embedded NUL, and input/output stream errors.
-- `cli`: real executable session, argument validation, `--help`, and confirmation
-  that the supplied database path is not created.
+## Verification
 
-Checks stay active in Release builds; tests do not rely on C `assert`.
+The three phase 1 suites were run successfully before changes. Parser tests
+remain intact; REPL and CLI assertions now expect real storage results. The
+phase 2 Linux build has eight CTest suites:
+
+| Suite | Coverage |
+| --- | --- |
+| `parser` | Original syntax, numeric bounds, UTF-8 and output-preservation cases |
+| `repl` | Help/exit, prompts, EOF/CRLF, oversized/NUL input, recovery, stream errors |
+| `record` | Exact serialized bytes, full-length names, round trips, invalid records |
+| `pager` | Cache, dirty writes, reopen, truncated reads and the 4096-page limit |
+| `storage` | Empty database, multi-page rows, scans, duplicate IDs, UTF-8, reopen and capacity |
+| `corruption` | Headers, unsupported versions, types, counters, padding, records, duplicate IDs and truncation; rejected files unchanged |
+| `failures` | Injected allocation/permission failures, short transfers, EINTR, disk-full/zero writes, fsync/close failures and no write retries |
+| `cli` | Separate-process persistence, EOF save, duplicate/missing keys, arguments and invalid-file preservation |
+
+The capacity test prepares a valid nearly-full file directly, then inserts the
+237510th row, rejects another row, and reopens the result. This validates the
+capacity boundary; it is **not** a benchmark or a claim that 237510 rows were
+loaded via CLI INSERT. Multi-page INSERT testing uses 175 sequential API calls
+with descending IDs, plus boundary-ID/name cases. A full INSERT workload has
+quadratic cost until indexing is implemented.
+
+The failure suite uses GNU-compatible linker `--wrap` on Linux without adding
+fault-injection hooks to production. Non-Linux builds omit that suite. All
+other suites use C17/POSIX APIs. Test checks remain active in Release builds.
+
+Sanitizer configuration (Fish-compatible):
 
 ```sh
-cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMINIDB_SANITIZERS=ON
+cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMINIDB_SANITIZERS=ON
 cmake --build build-sanitize
 env ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-sanitize --output-on-failure
 ```
 
-Verified on 2026-10-14 with GCC 16.2.1, CMake 4.4.4, and Ninja 1.13.2 on
-Arch Linux x86_64: **3/3 suites passed in Debug and with ASan/UBSan and leak
-detection enabled**, with no sanitizer findings in those runs. LeakSanitizer
-initially failed inside the execution sandbox due to its ptrace restrictions;
-the successful leak check ran outside that sandbox. In restricted environments,
-`ASAN_OPTIONS=detect_leaks=0:halt_on_error=1` retains address checks but does
-not verify leaks. Valgrind was unavailable and was not run.
-
-These tests validate phase 1 only. Persistence, B+ tree invariants, 100,000-row
-workloads, and benchmarks have not been implemented or measured.
+Verified on 2026-10-14 on Arch Linux x86_64 with GCC 16.2.1, CMake 4.4.4 and
+Ninja 1.13.2: **8/8 suites passed in Debug, and 8/8 with ASan, UBSan and leak
+detection enabled**, without sanitizer findings. The sanitizer test process ran
+outside the sandbox because its ptrace restrictions prevent LeakSanitizer from
+working there. Valgrind was not run. There are no performance benchmark results
+or B+ tree/transaction/crash-recovery test claims for this milestone.
 
 ## Debugging
 
-Build with `-DCMAKE_BUILD_TYPE=Debug`, then:
+Use the Debug build:
 
 ```sh
 gdb --args ./build/minidb database.db
 ```
 
-At the GDB prompt:
+Useful GDB commands:
 
 ```text
-break parser_parse
+break storage_insert
 run
 ```
 
-Enter `INSERT 1 "Alexis" 21` at the MiniDB prompt. At the breakpoint, use
-`print input`, `next`, `bt`, `finish`, and `continue` to inspect parsing and
-return to the REPL. `print *output` is meaningful after a successful parse,
-not before it. GDB 18.1 was verified with a breakpoint and stack trace in the
-parser test, followed by normal completion; ptrace required running outside
-the sandbox. Debug the normal build rather than combining GDB with LSan.
+Enter an INSERT command in the MiniDB prompt. Use `print *record`, `next`, `bt`
+and `continue` to inspect insertion. Set `break pager_sync` to follow the flush
+path during initialization and normal close. `break parser_parse` still exposes
+the parsing boundary. Avoid running LeakSanitizer under GDB/ptrace.
 
-VS Code can use its integrated terminal for these commands. With the optional
-C/C++ debugging extension, select `build/minidb` as the program, `gdb` as the
-debugger, and the workspace as the working directory.
+VS Code can run these commands in its integrated terminal. With an optional C/C++
+debugging extension, use `build/minidb` as the program, `database.db` as its
+argument, `gdb` as debugger and the workspace as working directory.
 
-## Roadmap and limitations
+## Limitations and next steps
 
-1. **Phase 1 (implemented):** CLI, parser, validation, and initial tests.
-2. **Phase 2 (next):** explicit binary serialization, versioned file metadata,
-   a 4096-byte pager, sequential retrieval, and persistence tests.
-3. **Phase 3:** persistent B+ tree with node splits and invariant checks.
-4. **Phase 4:** indexed execution, updates, documented deletion strategy, and
-   structural inspection commands.
-5. **Phase 5:** expanded verification, reproducible benchmarks, and quality work.
+- One fixed-schema table, sequential scans and O(N²) bulk insertion.
+- Opening scans all records, loads all pages and temporarily sorts IDs to reject
+  duplicate corruption; the ID array is discarded, not retained as an index.
+- Bounded file/cache size and no page eviction, space reuse or compaction.
+- One process at a time; no locking, concurrent access or external file changes.
+- No checksums: structurally valid accidental changes may go undetected.
+- No ACID transactions, WAL, rollback, crash/power-loss recovery or directory fsync.
+- No UPDATE, DELETE, B+ tree, `.stats`, `.btree`, full SQL, joins or replication.
 
-No storage format is defined in phase 1. `Record` is an in-memory structure and
-must never be written directly as a serialized record. The future format will
-specify offsets, endianness, metadata validation, and synchronization policy.
-Likewise, B+ tree layout and algorithms will be documented when implemented.
+Phase 3 will add a persistent B+ tree only after it is requested. Later phases
+will address updates/deletion, structural inspection, expanded tests and
+reproducible benchmarks. No third-party source code is vendored.
 
-The eventual scope is one fixed-schema table, without full SQL, joins,
-concurrent writers, ACID transactions, WAL, or crash recovery. There are no
-durability or power-loss guarantees. No third-party source code is vendored.
-
-Git is initialized locally. Build artifacts and test databases are ignored;
-no commits or remotes were created. Suggested first commit after review:
-`feat(cli): add phase-one REPL, validated parser, and CTest coverage`.
+Suggested phase 2 commit:
+`feat(storage): add paged persistence, record serialization, and failure tests`.

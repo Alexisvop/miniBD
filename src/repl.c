@@ -1,7 +1,7 @@
 #include "repl.h"
 #include "parser.h"
+#include "executor.h"
 
-#include <inttypes.h>
 #include <stddef.h>
 
 typedef enum { LINE_OK, LINE_EOF, LINE_INVALID, LINE_ERROR } LineStatus;
@@ -40,16 +40,16 @@ static void print_help(FILE *output)
           "ID: 0..4294967295; age: 0..150; name: 1..64 UTF-8 bytes.\n"
           "Names require double quotes; quote escaping is not supported.\n"
           "Input limit: 4096 bytes per line, excluding the newline.\n"
-          "Phase 1: commands are parsed only; no records are stored or retrieved.\n",
+          "Phase 2: sequential storage; changes are synchronized at normal close.\n",
           output);
 }
 
-int repl_run(FILE *input, FILE *output, FILE *errors, bool interactive)
+int repl_run(FILE *input, FILE *output, FILE *errors, bool interactive, Storage *storage)
 {
     char line[MINIDB_INPUT_MAX_BYTES + 1U];
     if (interactive) {
-        fputs("MiniDB v0.1\nEducational Database Engine\n"
-              "Phase 1: parser only. Type .help for usage.\n", output);
+        fputs("MiniDB v0.2\nEducational Database Engine\n"
+              "Type .help for usage. Changes are saved at normal close.\n", output);
     }
     for (;;) {
         if (interactive) {
@@ -83,16 +83,18 @@ int repl_run(FILE *input, FILE *output, FILE *errors, bool interactive)
         case COMMAND_EXIT: return 0;
         case COMMAND_HELP: print_help(output); break;
         case COMMAND_INSERT:
-            fprintf(output, "PARSED: INSERT %" PRIu32 " | %s | %u (storage not implemented)\n",
-                    command.record.id, command.record.name, (unsigned int)command.record.age);
-            break;
         case COMMAND_SELECT:
-            fprintf(output, "PARSED: SELECT %" PRIu32 " (storage not implemented)\n",
-                    command.record.id);
+        case COMMAND_SELECT_ALL: {
+            DbStatus execution = executor_execute(storage, &command, output);
+            if (execution != DB_OK) {
+                fprintf(errors, "ERROR: %s\n", db_status_message(execution));
+                if (execution != DB_DUPLICATE_ID && execution != DB_NOT_FOUND &&
+                    execution != DB_INVALID_RECORD && execution != DB_LIMIT_REACHED) {
+                    return 1;
+                }
+            }
             break;
-        case COMMAND_SELECT_ALL:
-            fputs("PARSED: SELECT_ALL (storage not implemented)\n", output);
-            break;
+        }
         }
     }
 }

@@ -1,70 +1,119 @@
-# Phase 1 architecture
+# Architecture through phase 2
 
-## Data flow and responsibilities
+## Data flow
 
-`main.c` validates process arguments, accepts an optional future database path,
-detects whether both standard input and output are terminals, and delegates
-to `repl_run`. Only terminal detection uses POSIX (`isatty`); all input parsing
-and line reading use C17 library facilities.
+```text
+main: arguments, open, REPL, close and final error status
+  |
+  +-- REPL: bounded input, help/exit, diagnostics
+        +-- Parser: text -> Command + ParseStatus
+        +-- Executor: Command -> storage operation + formatted result
+              +-- Storage: rows, uniqueness, scans and format validation
+                    +-- Record codec: field validation and explicit bytes
+                    +-- Pager: file descriptor, cached pages, dirty flags, fsync
+```
 
-`repl.c` consumes one complete line at a time, invokes the parser, reports
-diagnostics, and dispatches `.help`, `.exit`, or a parse preview. Its private
-`read_line` function uses buffered `fgetc`: it bounds memory while still draining
-invalid lines. A single `fgets` call would require additional logic to avoid
-executing the remainder of an oversized command. NUL bytes are rejected before
-the parser receives a C string. Input errors are distinct from ordinary EOF.
+`status.h` defines shared structured database errors; `encoding.h` provides
+alignment-independent little-endian uint32 helpers. There are no external
+runtime libraries. The code uses C17 and POSIX file/terminal interfaces; no
+Linux-only API is required by the production code. The deterministic fault test
+uses GNU-compatible linker wrapping on Linux, separate from production code.
 
-`parser.c` converts a NUL-terminated string to a `Command`. It recognizes exact
-tokens, consumes arguments in order, and requires the end of the line after the
-last argument. It accepts blank lines without dispatching anything. Parser error
-codes separate unknown commands, malformed syntax, invalid names, and numeric
-range errors from successful commands.
+## CLI, parser and executor
 
-`record.h` declares a fixed in-memory schema. Names have 65 bytes of capacity:
-64 payload bytes plus the C terminator. Age is a `uint8_t`, but parsing enforces
-the narrower educational range 0–150 before conversion. No disk layout follows
-from the layout or size of this structure.
+`main` now requires a database path, opens it before reading commands, and closes
+it on every return from the REPL. It reports errors from opening, synchronization,
+closing, and output flushing. Missing/extra process arguments are rejected before
+opening storage. `--help` does not create a database.
 
-## Important functions and invariants
+The existing bounded REPL reader and parser grammar are retained. `repl_run`
+now borrows a `Storage *` in addition to its streams. The dispatch switch sends
+INSERT, SELECT, and SELECT_ALL to `executor_execute`; meta-commands stay in the
+REPL. Input buffers and command objects remain caller-owned stack objects.
 
-- `parser_parse`: constructs a local zero-initialized command and publishes it
-  only after all validation succeeds. Failed parsing leaves the caller's output
-  unchanged; callers must inspect the status before using a command.
-- `parse_number`: accepts only decimal digits and checks the next multiplication
-  and addition before performing them. It is private and used with limits
-  `UINT32_MAX` and 150 (both at least 9, as required by its subtraction check).
-  Negative signs, overflow, and non-whitespace suffixes are rejected.
-- `parse_name`: locates the closing quote, checks the byte count, validates UTF-8,
-  and then copies the payload with an explicit NUL terminator.
-- `valid_utf8`: checks continuation bytes, minimum encoding lengths, Unicode
-  surrogate exclusions, and the U+10FFFF upper bound. It does not normalize text
-  or calculate display width. ASCII control characters and DEL are rejected.
-- `read_line`: stores at most 4096 bytes and always terminates its buffer. An
-  invalid line is consumed through LF or EOF without executing any prefix/suffix.
-- `repl_run`: blank/invalid lines are recoverable; input/output errors end the
-  session with a nonzero result. Output is flushed before reading the next line.
+The parser still publishes a command only on successful validation. The UTF-8
+checker moved to the record module so parser input and records supplied directly
+through the C storage API follow the same validation rules. No parser test was
+removed. REPL/CLI tests retain the previous input/error scenarios, with actual
+execution results replacing phase 1 parse-preview expectations.
 
-## Ownership and complexity
+`executor_execute` maps commands to storage calls and returns `DbStatus`. A scan
+visitor prints each row, propagating output failures. Duplicate IDs, missing
+records, invalid records, and capacity errors are recoverable command errors;
+fatal storage/allocation/I/O errors end the REPL. Buffer flushing also detects
+errors that a buffered `fprintf` could initially hide.
 
-The caller owns `Command` and input strings. No parser pointers escape to the
-command; names are copied. `repl_run` borrows streams and does not close them.
-Its line buffer and command live on the stack. Production code has no explicit
-heap allocations or mutable global state. The C stream implementation may
-allocate its own buffers; temporary test streams are closed by the tests.
+## Record codec
 
-Parsing is linear in input length; input reading is linear even for rejected
-oversized lines. Memory for a session is bounded independently of line length.
-There is no execution complexity or index search complexity to report yet.
+`Record` is an in-memory structure only. The disk codec has fixed 70-byte input
+and output buffers. It explicitly writes an ID, age, name length, and a zero-padded
+64-byte UTF-8 payload. Validation precedes copying. Deserialization never exposes
+an unterminated name to a caller and rejects noncanonical padding.
 
-## Alternatives and extension points
+The grammar remains case-sensitive, without escaping or semicolons. IDs are
+uint32 decimals, names are 1–64 UTF-8 bytes, and ages are 0–150. The format and
+schema share these limits but do not depend on native struct layout.
 
-A hand-written cursor parser keeps delimiters and errors visible without adding
-a lexer generator or runtime dependency. Unlike `atoi`, the numeric helper can
-distinguish malformed input and overflow. Unlike unbounded line allocation, the
-bounded reader has a predictable memory limit.
+## Storage invariants and operations
 
-Meta-commands share the parser so they get the same whitespace and trailing-token
-validation. The small dispatch switch remains in the REPL because phase 1 has no
-execution behavior to abstract. Phase 2 will add storage and an executor; command
-previews can then be replaced with calls returning structured execution results.
-Storage, pager, and B+ tree modules are intentionally deferred until their phase.
+`Storage` owns a `Pager` and the validated total row count. Page 0 is metadata;
+data pages follow contiguously, densely packed at 58 records each. Only the last
+data page may be partial, and no empty data page is allocated.
+
+- **Open:** initialize a zero-byte file or fully validate an existing one.
+  Validate the header before using its counters for allocations. Read and check
+  every data page, deserialize every row, and reject duplicate IDs using a
+  temporary sorted ID array. Discard the handle without flushing on failure.
+- **SELECT:** scan pages and occupied slots, compare ID bytes, then deserialize
+  the matching row. Return `DB_NOT_FOUND` without modifying output if absent.
+- **INSERT:** validate/serialize, scan for duplicates, check capacity, acquire
+  metadata and the last/new page, then append and update counts. All operations
+  that can allocate or read occur before publishing the row. Allocation failure
+  can mark an unchanged metadata page dirty, but does not change row/page counts.
+- **SELECT_ALL:** visit rows in physical insertion order through a callback.
+  A callback failure stops the scan. Callbacks borrow each row for one invocation
+  and must not mutate or close the scanned storage.
+- **Sync/close:** delegate writes and resource management to the pager; errors
+  propagate to callers. Close consumes the handle even when it fails.
+
+Lookup, duplicate checking and complete scans are O(N). A sequence of N distinct
+INSERT operations is O(N²). Opening validates O(N) bytes and performs an O(N log N)
+ID sort; this array is discarded, so no index is implemented. This phase favors
+correctness and simple persistence, not insertion throughput.
+
+## Pager and ownership
+
+`Pager` owns one descriptor and at most 4096 cached page objects. Its API uses
+page IDs and raw byte buffers, with no record, metadata-field, or node-layout
+knowledge. Page zero is written last by convention. New B+ tree page types can
+use the same allocation/read/write API in phase 3, while Storage and disk format
+validation will need to evolve.
+
+Read buffers returned by `pager_get` are const. `pager_write` returns a mutable
+buffer and marks its page dirty. `pager_allocate` checks capacity, allocates a
+zeroed buffer, and only then increments the page count. Borrowed pointers stay
+valid until close because buffers are never evicted or moved.
+
+`pread`/`pwrite` loops retry EINTR and handle short transfers. The file is checked
+with `fstat` before pages are allocated. All allocations are checked. On sync
+failure the pager enters a failed state, stops accesses, and avoids write retries
+at close. `pager_discard` closes and frees without synchronization, which is
+necessary for safely rejecting invalid files.
+
+A fixed pointer table and no eviction keep ownership simple and cap payload
+memory at 16 MiB. This is a deliberate initial limit, not a configurable cache
+replacement policy. Storage validation loads all pages when opening a populated
+file. Single-process access is assumed; there are no locks or cache invalidation
+notifications from other processes.
+
+## Error and persistence boundary
+
+An accepted INSERT changes memory immediately. Normal `.exit`/EOF triggers full
+writes and file fsync; it is the successful close that completes the CLI's
+persistence boundary. A failed close returns a nonzero process status even if
+INSERT previously printed OK. There is no commit/rollback or atomic group of
+page writes. Read [the format and sync contract](storage-format.md) before adding
+transactional or crash-safety claims.
+
+The next phase is a B+ tree, only when explicitly requested. UPDATE, DELETE,
+`.stats`, `.btree`, SQL, WAL, recovery, and concurrent access remain unimplemented.

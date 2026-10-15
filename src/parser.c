@@ -40,48 +40,6 @@ static ParseStatus parse_number(const char **cursor, uint32_t limit, uint32_t *v
     return PARSE_OK;
 }
 
-/* Reject overlong encodings, surrogates, truncated sequences and > U+10FFFF. */
-static bool valid_utf8(const unsigned char *text, size_t length)
-{
-    size_t i = 0;
-    while (i < length) {
-        unsigned char first = text[i++];
-        if (first < 0x80U) {
-            if (first < 0x20U || first == 0x7fU) {
-                return false;
-            }
-            continue;
-        }
-        size_t extra;
-        uint32_t codepoint;
-        uint32_t minimum;
-        if (first >= 0xc2U && first <= 0xdfU) {
-            extra = 1; codepoint = first & 0x1fU; minimum = 0x80U;
-        } else if (first >= 0xe0U && first <= 0xefU) {
-            extra = 2; codepoint = first & 0x0fU; minimum = 0x800U;
-        } else if (first >= 0xf0U && first <= 0xf4U) {
-            extra = 3; codepoint = first & 0x07U; minimum = 0x10000U;
-        } else {
-            return false;
-        }
-        if (length - i < extra) {
-            return false;
-        }
-        for (size_t j = 0; j < extra; ++j) {
-            unsigned char next = text[i++];
-            if ((next & 0xc0U) != 0x80U) {
-                return false;
-            }
-            codepoint = (codepoint << 6U) | (next & 0x3fU);
-        }
-        if (codepoint < minimum || codepoint > 0x10ffffU ||
-            (codepoint >= 0xd800U && codepoint <= 0xdfffU)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static ParseStatus parse_name(const char **cursor, char *name)
 {
     const char *p = *cursor;
@@ -96,8 +54,7 @@ static ParseStatus parse_name(const char **cursor, char *name)
         return PARSE_INVALID_SYNTAX;
     }
     size_t length = (size_t)(p - start);
-    if (length == 0 || length > MINIDB_NAME_MAX_BYTES ||
-        !valid_utf8((const unsigned char *)start, length)) {
+    if (!record_name_valid(start, length)) {
         return PARSE_INVALID_NAME;
     }
     ++p;
