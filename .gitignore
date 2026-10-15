@@ -5,5 +5,5 @@
 core
 *.o
 *.a
-/*.md
+/recursos/
 #!README.md
