@@ -19,7 +19,10 @@ int __real_close(int fd);
 static int allocation_budget = -1;
 static int write_budget = -1;
 static bool deny_open;
-static bool fail_read;
+/* Fault flags are read by linker --wrap callbacks reached through other translation
+ * units. Keep the injected state observable even under Release optimization. */
+static volatile bool fail_read;
+static volatile unsigned int injected_read_failures;
 static bool fail_sync;
 static bool fail_close;
 static bool zero_write;
@@ -76,6 +79,7 @@ ssize_t __wrap_pread(int fd, void *buffer, size_t count, off_t offset)
         return -1;
     }
     if (fail_read) {
+        ++injected_read_failures;
         errno = EIO;
         return -1;
     }
@@ -83,6 +87,17 @@ ssize_t __wrap_pread(int fd, void *buffer, size_t count, off_t offset)
         count = transfer_limit;
     }
     return __real_pread(fd, buffer, count, offset);
+}
+
+/* On glibc with _FORTIFY_SOURCE, optimized pread() calls may become
+ * __pread_chk(). Intercept that variant too in this test-only binary. */
+ssize_t __wrap___pread_chk(int fd, void *buffer, size_t count, off_t offset, size_t buffer_size)
+{
+    if (count > buffer_size) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    return __wrap_pread(fd, buffer, count, offset);
 }
 
 ssize_t __wrap_pwrite(int fd, const void *buffer, size_t count, off_t offset)
@@ -289,8 +304,10 @@ int main(void)
         CHECK(storage_open(path, &storage) == DB_NO_MEMORY && storage == NULL);
         allocation_budget = -1;
     }
+    injected_read_failures = 0;
     fail_read = true;
     CHECK(storage_open(path, &storage) == DB_IO_ERROR && storage == NULL);
+    CHECK(injected_read_failures > 0); /* Ensure the fault reached the I/O wrapper. */
     fail_read = false;
     interrupt_read = true;
     CHECK(storage_open(path, &storage) == DB_OK && !interrupt_read);

@@ -1,0 +1,55 @@
+name: MiniDB CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.config.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: Debug
+            build_type: Debug
+            sanitizers: 'OFF'
+          - name: Release
+            build_type: Release
+            sanitizers: 'OFF'
+          - name: ASan + UBSan
+            build_type: Debug
+            sanitizers: 'ON'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build python3
+
+      - name: Configure CMake
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }}
+          -DBUILD_TESTING=ON
+          -DMINIDB_SANITIZERS=${{ matrix.config.sanitizers }}
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Run all 19 CTest suites (including stress)
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build --output-on-failure
