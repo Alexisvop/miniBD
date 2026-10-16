@@ -89,6 +89,17 @@ ssize_t __wrap_pread(int fd, void *buffer, size_t count, off_t offset)
     return __real_pread(fd, buffer, count, offset);
 }
 
+/* On glibc with _FORTIFY_SOURCE, optimized pread() calls may become
+ * __pread_chk(). Intercept that variant too in this test-only binary. */
+ssize_t __wrap___pread_chk(int fd, void *buffer, size_t count, off_t offset, size_t buffer_size)
+{
+    if (count > buffer_size) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    return __wrap_pread(fd, buffer, count, offset);
+}
+
 ssize_t __wrap_pwrite(int fd, const void *buffer, size_t count, off_t offset)
 {
     ++writes;
@@ -293,13 +304,10 @@ int main(void)
         CHECK(storage_open(path, &storage) == DB_NO_MEMORY && storage == NULL);
         allocation_budget = -1;
     }
+    injected_read_failures = 0;
     fail_read = true;
-    DbStatus read_status = storage_open(path, &storage);
-    if (read_status != DB_IO_ERROR || storage != NULL) {
-        fprintf(stderr, "injected read: status=%d, storage=%p, wraps=%u, armed=%d\n",
-                (int)read_status, (void *)storage, (unsigned int)injected_read_failures, (int)fail_read);
-    }
-    CHECK(read_status == DB_IO_ERROR && storage == NULL);
+    CHECK(storage_open(path, &storage) == DB_IO_ERROR && storage == NULL);
+    CHECK(injected_read_failures > 0); /* Ensure the fault reached the I/O wrapper. */
     fail_read = false;
     interrupt_read = true;
     CHECK(storage_open(path, &storage) == DB_OK && !interrupt_read);
