@@ -46,6 +46,16 @@ int main(void)
     CHECK(pager_get(pager, 2, &read_page) == DB_LIMIT_REACHED);
     CHECK(pager_get(pager, UINT32_MAX, &read_page) == DB_LIMIT_REACHED);
 
+    CHECK(pager_begin(pager) == DB_OK);
+    CHECK(pager_begin(pager) == DB_IO_ERROR);
+    CHECK(pager_write(pager, 1, &page) == DB_OK);
+    page[10] = 99;
+    CHECK(pager_allocate(pager, &id, &page) == DB_OK && id == 2);
+    CHECK(pager_sync(pager) == DB_IO_ERROR);
+    pager_rollback(pager);
+    CHECK(pager_page_count(pager) == 2);
+    CHECK(pager_get(pager, 1, &read_page) == DB_OK && read_page[10] == 42);
+
     for (uint32_t i = 2; i < MINIDB_MAX_PAGES; ++i) {
         CHECK(pager_allocate(pager, &id, &page) == DB_OK && id == i);
     }

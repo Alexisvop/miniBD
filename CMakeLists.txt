@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(MiniDB VERSION 0.2.0 LANGUAGES C)
+project(MiniDB VERSION 0.4.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -19,7 +19,7 @@ if(MINIDB_SANITIZERS)
 endif()
 
 add_library(minidb_core src/parser.c src/repl.c src/record.c src/status.c
-    src/pager.c src/storage.c src/executor.c)
+    src/pager.c src/storage.c src/executor.c src/btree.c)
 target_include_directories(minidb_core PUBLIC include)
 target_link_libraries(minidb_core PUBLIC minidb_options)
 
@@ -28,11 +28,13 @@ target_link_libraries(minidb PRIVATE minidb_core)
 
 include(CTest)
 if(BUILD_TESTING)
-    foreach(suite parser repl record pager storage corruption)
+    foreach(suite parser repl record pager storage corruption btree btree_corruption queries mixed tombstones)
         add_executable(test_${suite} tests/test_${suite}.c)
         target_link_libraries(test_${suite} PRIVATE minidb_core)
         add_test(NAME ${suite} COMMAND test_${suite})
     endforeach()
+    add_test(NAME btree_large COMMAND test_btree --large)
+    set_tests_properties(btree_large PROPERTIES LABELS "stress")
     # GNU-compatible linker wrapping keeps fault injection out of production.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_executable(test_failures tests/test_failures.c)
@@ -42,8 +44,18 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME failures COMMAND test_failures)
     endif()
+    add_test(NAME cli_queries COMMAND ${CMAKE_COMMAND}
+        -DMINIDB=$<TARGET_FILE:minidb>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli_queries.cmake)
     add_test(NAME cli COMMAND ${CMAKE_COMMAND}
         -DMINIDB=$<TARGET_FILE:minidb>
         -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli.cmake)
+endif()
+
+option(MINIDB_BENCHMARKS "Build standalone lookup benchmark (not a CTest test)" OFF)
+if(MINIDB_BENCHMARKS)
+    add_executable(benchmark_lookup benchmarks/lookup.c)
+    target_link_libraries(benchmark_lookup PRIVATE minidb_core)
 endif()

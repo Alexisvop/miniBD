@@ -10,7 +10,7 @@ typedef struct { uint32_t next; } ScanState;
 static DbStatus check_order(const Record *record, void *context)
 {
     ScanState *state = context;
-    CHECK(record->id == 1000U - state->next);
+    CHECK(record->id == 1000U - (MINIDB_RECORDS_PER_PAGE * 3U) + state->next);
     ++state->next;
     return DB_OK;
 }
@@ -25,47 +25,39 @@ static DbStatus stop_scan(const Record *record, void *context)
 
 static void test_full_database(const char *path)
 {
-    /* Generate a valid, nearly-full fixture directly to avoid quadratic INSERT
-     * setup. Then exercise the public INSERT API at the actual capacity. */
-    FILE *file = fopen(path, "wb");
-    CHECK(file != NULL);
-    uint8_t page[MINIDB_PAGE_SIZE] = {0};
-    memcpy(page, "MINIDB\r\n", 8);
-    encode_u32(page + 8, 1);
-    encode_u32(page + 12, MINIDB_PAGE_SIZE);
-    encode_u32(page + 16, MINIDB_MAX_PAGES);
-    encode_u32(page + 20, MINIDB_MAX_RECORDS - 1U);
-    encode_u32(page + 28, 1);
-    CHECK(fwrite(page, 1, sizeof(page), file) == sizeof(page));
-    uint32_t next = 0;
-    for (uint32_t id = 1; id < MINIDB_MAX_PAGES; ++id) {
-        memset(page, 0, sizeof(page));
-        encode_u32(page, 2);
-        uint32_t count = MINIDB_RECORDS_PER_PAGE - (id == MINIDB_MAX_PAGES - 1U ? 1U : 0U);
-        encode_u32(page + 4, count);
-        for (uint32_t slot = 0; slot < count; ++slot) {
-            Record record = {next++, "Capacity", 42};
-            CHECK(record_serialize(&record, page + MINIDB_DATA_HEADER_SIZE + slot * MINIDB_RECORD_SIZE));
-        }
-        CHECK(fwrite(page, 1, sizeof(page), file) == sizeof(page));
-    }
-    CHECK(next == MINIDB_MAX_RECORDS - 1U);
-    CHECK(fclose(file) == 0);
+    CHECK(truncate(path, 0) == 0);
     Storage *storage;
     CHECK(storage_open(path, &storage) == DB_OK);
-    Record last = {MINIDB_MAX_RECORDS - 1U, "Last", 150};
-    CHECK(storage_insert(storage, &last) == DB_OK);
-    CHECK(storage_record_count(storage) == MINIDB_MAX_RECORDS);
+    uint32_t inserted = 0;
+    for (; inserted < MINIDB_MAX_RECORDS; ++inserted) {
+        Record row = {inserted, "Capacity", 42};
+        DbStatus status = storage_insert(storage, &row);
+        if (status == DB_LIMIT_REACHED) break;
+        CHECK(status == DB_OK);
+    }
+    CHECK(inserted > 100000U && inserted < MINIDB_MAX_RECORDS);
+    CHECK(storage_record_count(storage) == inserted);
+    StorageStats stats;
+    CHECK(storage_validate(storage, &stats) == DB_OK);
+    CHECK(stats.pages <= MINIDB_MAX_PAGES && stats.tree.height >= 3);
+    Record last;
+    CHECK(storage_select(storage, inserted - 1U, &last) == DB_OK);
     CHECK(storage_insert(storage, &last) == DB_DUPLICATE_ID);
-    last.id = MINIDB_MAX_RECORDS;
-    CHECK(storage_insert(storage, &last) == DB_LIMIT_REACHED);
+    CHECK(storage_select(storage, inserted, &last) == DB_NOT_FOUND);
     CHECK(storage_close(storage) == DB_OK);
     CHECK(storage_open(path, &storage) == DB_OK);
-    CHECK(storage_record_count(storage) == MINIDB_MAX_RECORDS);
-    CHECK(storage_select(storage, MINIDB_MAX_RECORDS - 1U, &last) == DB_OK);
-    CHECK(strcmp(last.name, "Last") == 0);
-    CHECK(storage_select(storage, MINIDB_MAX_RECORDS, &last) == DB_NOT_FOUND);
+    CHECK(storage_record_count(storage) == inserted);
+    CHECK(storage_select(storage, inserted - 1U, &last) == DB_OK);
+    last.id = inserted;
+    CHECK(storage_insert(storage, &last) == DB_LIMIT_REACHED);
+    CHECK(storage_validate(storage, &stats) == DB_OK);
+    CHECK(storage_delete(storage, inserted - 1U) == DB_OK);
+    last.id = inserted - 1U;
+    CHECK(storage_insert(storage, &last) == DB_OK); /* Same ID reuses its slot even at capacity. */
+    CHECK(storage_validate(storage, &stats) == DB_OK && stats.active_records == inserted);
+    CHECK(stats.records == inserted && stats.tree.entries == inserted);
     CHECK(storage_close(storage) == DB_OK);
+    printf("Indexed capacity reached at %u records; rejected append preserved consistency.\n", inserted);
 }
 
 int main(void)
@@ -76,7 +68,7 @@ int main(void)
     CHECK(storage_open(path, &storage) == DB_OK);
     CHECK(storage_record_count(storage) == 0);
     struct stat info;
-    CHECK(stat(path, &info) == 0 && info.st_size == MINIDB_PAGE_SIZE);
+    CHECK(stat(path, &info) == 0 && info.st_size == 2 * MINIDB_PAGE_SIZE);
     unsigned int calls = 0;
     CHECK(storage_scan(storage, stop_scan, &calls) == DB_OK && calls == 0);
     Record row = {0, "unchanged", 0};
@@ -102,7 +94,7 @@ int main(void)
     CHECK(storage_scan(storage, check_order, &scan) == DB_OK && scan.next == rows);
     CHECK(storage_scan(storage, stop_scan, &calls) == DB_IO_ERROR && calls == 1);
     CHECK(storage_sync(storage) == DB_OK);
-    CHECK(stat(path, &info) == 0 && info.st_size == 5 * (off_t)MINIDB_PAGE_SIZE);
+    CHECK(stat(path, &info) == 0 && info.st_size == 6 * (off_t)MINIDB_PAGE_SIZE);
     CHECK(storage_close(storage) == DB_OK);
     CHECK(storage_open(path, &storage) == DB_OK);
     CHECK(storage_record_count(storage) == rows);
@@ -123,6 +115,6 @@ int main(void)
     CHECK(storage_close(storage) == DB_OK);
     test_full_database(path);
     CHECK(unlink(path) == 0);
-    puts("Storage: empty, multi-page persistence, scans, duplicates and 237510-row capacity passed.");
+    puts("Storage: empty, multi-page persistence, scans, duplicates and indexed page capacity passed.");
     return 0;
 }

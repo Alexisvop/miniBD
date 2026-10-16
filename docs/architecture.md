@@ -1,119 +1,118 @@
-# Architecture through phase 2
+# Architecture through phase 4
 
-## Data flow
+## Layers and ownership
 
 ```text
-main: arguments, open, REPL, close and final error status
-  |
-  +-- REPL: bounded input, help/exit, diagnostics
-        +-- Parser: text -> Command + ParseStatus
-        +-- Executor: Command -> storage operation + formatted result
-              +-- Storage: rows, uniqueness, scans and format validation
-                    +-- Record codec: field validation and explicit bytes
-                    +-- Pager: file descriptor, cached pages, dirty flags, fsync
+main: open -> REPL -> close/sync -> final exit status
+  REPL: bounded input, terminal formatting, .help/.exit, error recovery
+    Parser: text -> Command + optional AgeFilter
+    Executor: Command -> ExecutionResult + borrowed row/node callbacks
+      Storage: rows, visibility, index coordination and validation
+        BTree: ID -> (page, slot), sorted leaf scan and structural inspection
+        Record codec: unchanged 70-byte serialization and UTF-8 validation
+        Pager: cached pages, memory savepoints, dirty writes and fsync
 ```
 
-`status.h` defines shared structured database errors; `encoding.h` provides
-alignment-independent little-endian uint32 helpers. There are no external
-runtime libraries. The code uses C17 and POSIX file/terminal interfaces; no
-Linux-only API is required by the production code. The deterministic fault test
-uses GNU-compatible linker wrapping on Linux, separate from production code.
+Main owns Storage; Storage owns Pager and BTree state; BTree borrows Pager.
+REPL/Executor borrow Storage. Row and node callbacks borrow their argument only
+for the duration of the call and must not modify/close the scanned database.
+No terminal I/O remains in Executor, Storage or BTree. Only REPL formats query
+rows, success messages, statistics and tree descriptions.
 
-## CLI, parser and executor
+## Commands and structured execution
 
-`main` now requires a database path, opens it before reading commands, and closes
-it on every return from the REPL. It reports errors from opening, synchronization,
-closing, and output flushing. Missing/extra process arguments are rejected before
-opening storage. `--help` does not create a database.
+`Command` contains a type, a Record and an AgeFilter. INSERT/UPDATE use the full
+Record; SELECT/DELETE use its ID. Only SELECT_ALL accepts a filter. The parser
+preserves the existing strict numeric/UTF-8 checks and publishes output only on
+success. WHERE grammar is deliberately limited to `WHERE age <op> <value>` with
+whitespace between tokens and a value in 0..150.
 
-The existing bounded REPL reader and parser grammar are retained. `repl_run`
-now borrows a `Storage *` in addition to its streams. The dispatch switch sends
-INSERT, SELECT, and SELECT_ALL to `executor_execute`; meta-commands stay in the
-REPL. Input buffers and command objects remain caller-owned stack objects.
+`executor_execute(storage, command, sink)` returns an `ExecutionResult`:
 
-The parser still publishes a command only on successful validation. The UTF-8
-checker moved to the record module so parser input and records supplied directly
-through the C storage API follow the same validation rules. No parser test was
-removed. REPL/CLI tests retain the previous input/error scenarios, with actual
-execution results replacing phase 1 parse-preview expectations.
+- `status`: DbStatus for success, missing/deleted/duplicate ID, invalid command or
+  record, capacity, allocation, I/O, permission, corrupt or incompatible file.
+- `rows`: successfully affected rows for mutations, or query rows delivered before
+  the final status. Zero matches are `DB_OK` with rows=0. Missing/deleted SELECT
+  has rows=0 and invokes no row callback.
+- `stats`: structured StorageStats, populated only for successful .stats.
 
-`executor_execute` maps commands to storage calls and returns `DbStatus`. A scan
-visitor prints each row, propagating output failures. Duplicate IDs, missing
-records, invalid records, and capacity errors are recoverable command errors;
-fatal storage/allocation/I/O errors end the REPL. Buffer flushing also detects
-errors that a buffered `fprintf` could initially hide.
+An optional ExecutionSink supplies record/node callbacks and an opaque context.
+NULL callbacks discard values but still count query results, allowing tests and
+other clients to run without terminal streams. Query callback failures propagate
+and preserve the count of earlier successful deliveries. There is no allocated
+result list to free. .btree uses BTreeNodeView callbacks, not encoded bytes or
+printing from Storage. Invalid direct C commands/filters return DB_INVALID_COMMAND.
 
-## Record codec
+The REPL turns successful mutations into `OK: 1 row inserted/updated/deleted`,
+empty scans into `OK: 0 rows`, and recoverable statuses into diagnostics. Fatal
+storage/allocation/output errors end the REPL; main still attempts normal close.
+An error while rendering an already accepted mutation does not undo that mutation.
 
-`Record` is an in-memory structure only. The disk codec has fixed 70-byte input
-and output buffers. It explicitly writes an ID, age, name length, and a zero-padded
-64-byte UTF-8 payload. Validation precedes copying. Deserialization never exposes
-an unterminated name to a caller and rejects noncanonical padding.
+## Point operations and visibility
 
-The grammar remains case-sensitive, without escaping or semicolons. IDs are
-uint32 decimals, names are 1–64 UTF-8 bytes, and ages are 0–150. The format and
-schema share these limits but do not depend on native struct layout.
+The B+ tree retains one entry for every allocated data slot, including tombstones.
+The metadata total count and `storage_record_count` count those physical slots.
+A separate active count is stored and validated against deletion bits. A missing
+ID is DB_NOT_FOUND; an indexed but deleted ID is DB_DELETED. Neither state exposes
+a row through public SELECT. DELETE repeated on a tombstone returns DB_DELETED.
 
-## Storage invariants and operations
+UPDATE uses indexed lookup and requires an active row. It preserves the ID and
+location, validates/serializes the new name/age, then rewrites one data slot within
+a memory savepoint. No index, total count or active count changes.
 
-`Storage` owns a `Pager` and the validated total row count. Page 0 is metadata;
-data pages follow contiguously, densely packed at 58 records each. Only the last
-data page may be partial, and no empty data page is allocated.
+DELETE performs the same lookup and sets the slot's bitmap bit. It decrements the
+active count, preserving the record bytes, index entry, links, counts of occupied
+slots and tree shape. INSERT on a deleted ID replaces its payload, clears its bit
+and increments active count without adding a slot or index entry. INSERT on an
+active ID still returns DB_DUPLICATE_ID. Slots are not reused for different IDs.
 
-- **Open:** initialize a zero-byte file or fully validate an existing one.
-  Validate the header before using its counters for allocations. Read and check
-  every data page, deserialize every row, and reject duplicate IDs using a
-  temporary sorted ID array. Discard the handle without flushing on failure.
-- **SELECT:** scan pages and occupied slots, compare ID bytes, then deserialize
-  the matching row. Return `DB_NOT_FOUND` without modifying output if absent.
-- **INSERT:** validate/serialize, scan for duplicates, check capacity, acquire
-  metadata and the last/new page, then append and update counts. All operations
-  that can allocate or read occur before publishing the row. Allocation failure
-  can mark an unchanged metadata page dirty, but does not change row/page counts.
-- **SELECT_ALL:** visit rows in physical insertion order through a callback.
-  A callback failure stops the scan. Callbacks borrow each row for one invocation
-  and must not mutate or close the scanned storage.
-- **Sync/close:** delegate writes and resource management to the pager; errors
-  propagate to callers. Close consumes the handle even when it fails.
+## Scans and filters
 
-Lookup, duplicate checking and complete scans are O(N). A sequence of N distinct
-INSERT operations is O(N²). Opening validates O(N) bytes and performs an O(N log N)
-ID sort; this array is discarded, so no index is implemented. This phase favors
-correctness and simple persistence, not insertion throughput.
+Storage follows the ID-ordered leaf chain, checks each referenced slot and emits
+only active records. Executor applies one optional age predicate (`= != < <= > >=`)
+to those rows before passing matches to the client. Thus results stay ordered by
+ID and deleted rows cannot match, regardless of their stored age.
 
-## Pager and ownership
+Age filtering is a **scan**, not an age-index search: it visits all indexed keys,
+including tombstones, with O(H + N) tree work. Point lookup remains O(log N).
+Only ID is indexed. There is no query optimizer, boolean expression language,
+compound filter, join or SQL grammar.
 
-`Pager` owns one descriptor and at most 4096 cached page objects. Its API uses
-page IDs and raw byte buffers, with no record, metadata-field, or node-layout
-knowledge. Page zero is written last by convention. New B+ tree page types can
-use the same allocation/read/write API in phase 3, while Storage and disk format
-validation will need to evolve.
+## Format, validation and consistency
 
-Read buffers returned by `pager_get` are const. `pager_write` returns a mutable
-buffer and marks its page dirty. `pager_allocate` checks capacity, allocates a
-zeroed buffer, and only then increments the page count. Borrowed pointers stay
-valid until close because buffers are never evicted or moved.
+[Format v3](storage-format.md) uses eight former reserved data-header bytes as a
+64-bit bitmap, encoded byte by byte. There are 58 possible slots; bits of unused
+slots and bits 58..63 must be zero. Metadata offset 36 now stores active count.
+The 70-byte record and B+ tree node formats are unchanged. V1/v2 are rejected
+without modifications, and no migration tool is included.
 
-`pread`/`pwrite` loops retry EINTR and handle short transfers. The file is checked
-with `fstat` before pages are allocated. All allocations are checked. On sync
-failure the pager enters a failed state, stops accesses, and avoids write retries
-at close. `pager_discard` closes and frees without synchronization, which is
-necessary for safely rejecting invalid files.
+Open validates all records, including deleted payloads, and checks every index
+location against a matching record ID. The index count must equal total slots;
+active count must equal occupied clear bitmap bits. The original ordering,
+separator, occupancy, depth, link, cycle and reachability validations remain.
+The index is loaded/validated, never reconstructed on open.
 
-A fixed pointer table and no eviction keep ownership simple and cap payload
-memory at 16 MiB. This is a deliberate initial limit, not a configurable cache
-replacement policy. Storage validation loads all pages when opening a populated
-file. Single-process access is assumed; there are no locks or cache invalidation
-notifications from other processes.
+Pager savepoints preserve bytes and original dirty flags. UPDATE snapshots one
+data page; DELETE/reactivation snapshot data and metadata; new INSERT may also
+modify index pages. All fallible work finishes before publishing scalar counters.
+Failure restores memory, including prior accepted unflushed changes. Deleted
+IDs can reactivate even at the file page limit, provided memory allocation succeeds.
 
-## Error and persistence boundary
+This is not ACID, isolation or WAL. Disk writes occur at explicit sync/normal close,
+not per mutation. A bitmap page and its metadata counter can be partially written
+on failure; fsync does not make those writes atomic. The Pager remains poisoned
+after write/sync errors, reports them and avoids retrying writes. No crash recovery,
+concurrent access, cache coherence, directory fsync or automatic repair exists.
 
-An accepted INSERT changes memory immediately. Normal `.exit`/EOF triggers full
-writes and file fsync; it is the successful close that completes the CLI's
-persistence boundary. A failed close returns a nonzero process status even if
-INSERT previously printed OK. There is no commit/rollback or atomic group of
-page writes. Read [the format and sync contract](storage-format.md) before adding
-transactional or crash-safety claims.
+## Statistics and inspection
 
-The next phase is a B+ tree, only when explicitly requested. UPDATE, DELETE,
-`.stats`, `.btree`, SQL, WAL, recovery, and concurrent access remain unimplemented.
+.stats reports total allocated records, active records, deleted records, total
+index entries, total/data/index pages, internal/leaf counts and height, followed by
+session split counts. Structural values describe current state, including pending
+cache changes; they are persisted only after successful sync. Session split counts
+reset at open. UPDATE/DELETE/reactivation do not increment them.
+
+.btree deliberately shows retained deleted IDs because it describes the physical
+index. All-deleted databases can have zero active rows but a nonempty multilevel
+tree. Logical deletion does not reclaim disk space, rebalance nodes, erase payloads
+or compact the file. Page payload cache remains bounded at 16 MiB without eviction.

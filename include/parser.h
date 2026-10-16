@@ -5,15 +5,26 @@
 
 typedef enum {
     COMMAND_INSERT,
+    COMMAND_UPDATE,
+    COMMAND_DELETE,
     COMMAND_SELECT,
     COMMAND_SELECT_ALL,
     COMMAND_HELP,
+    COMMAND_STATS,
+    COMMAND_BTREE,
     COMMAND_EXIT
 } CommandType;
 
+typedef enum {
+    AGE_FILTER_NONE, AGE_FILTER_EQ, AGE_FILTER_NE, AGE_FILTER_LT,
+    AGE_FILTER_LE, AGE_FILTER_GT, AGE_FILTER_GE
+} AgeOperator;
+typedef struct { AgeOperator op; uint8_t value; } AgeFilter;
+
 typedef struct {
     CommandType type;
-    Record record; /* SELECT uses only record.id. */
+    Record record; /* SELECT/DELETE use only record.id. UPDATE preserves this ID. */
+    AgeFilter filter; /* SELECT_ALL only. */
 } Command;
 
 typedef enum {

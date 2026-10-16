@@ -1,7 +1,7 @@
 set(input "${TEST_DIR}/cli-input.txt")
 set(database "${TEST_DIR}/cli-persistence.db")
 file(REMOVE "${database}")
-file(WRITE "${input}" "INSERT 1 \"Alexis\" 21\nINSERT 2 \"Carlos\" 22\nSELECT 1\nSELECT_ALL\n.exit\n")
+file(WRITE "${input}" "INSERT 2 \"Carlos\" 22\nINSERT 1 \"Alexis\" 21\nSELECT 1\nSELECT_ALL\n.exit\n")
 execute_process(COMMAND "${MINIDB}" "${database}" INPUT_FILE "${input}"
     OUTPUT_VARIABLE output ERROR_VARIABLE errors RESULT_VARIABLE status)
 if(NOT status EQUAL 0 OR NOT output MATCHES "OK: 1 row inserted"
@@ -36,6 +36,14 @@ foreach(arguments "one.db;two.db" "--unknown" "")
         message(FATAL_ERROR "CLI argument validation failed (${status}): ${errors}")
     endif()
 endforeach()
+file(WRITE "${input}" ".stats\n.btree\n.exit\n")
+execute_process(COMMAND "${MINIDB}" "${database}" INPUT_FILE "${input}"
+    OUTPUT_VARIABLE output ERROR_VARIABLE errors RESULT_VARIABLE status)
+if(NOT status EQUAL 0 OR NOT output MATCHES "records=3"
+    OR NOT output MATCHES "leaf root keys=3"
+    OR NOT output MATCHES "Session splits: leaf=0 internal=0 root=0" OR NOT errors STREQUAL "")
+    message(FATAL_ERROR "Inspection commands failed (${status}): ${output} ${errors}")
+endif()
 file(WRITE "${database}" "not a database")
 execute_process(COMMAND "${MINIDB}" "${database}" INPUT_FILE "${input}"
     OUTPUT_VARIABLE output ERROR_VARIABLE errors RESULT_VARIABLE status)

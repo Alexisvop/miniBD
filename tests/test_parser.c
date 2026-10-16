@@ -50,13 +50,17 @@ int main(void)
     CHECK(parser_parse(" .exit ", &command) == PARSE_OK);
     CHECK(command.type == COMMAND_EXIT);
 
+    CHECK(parser_parse(".btree", &command) == PARSE_OK && command.type == COMMAND_BTREE);
+    CHECK(parser_parse(".stats", &command) == PARSE_OK && command.type == COMMAND_STATS);
+    check_status(".stats extra", PARSE_INVALID_SYNTAX);
+    check_status(".btree extra", PARSE_INVALID_SYNTAX);
     const struct { const char *input; ParseStatus expected; } cases[] = {
         {"", PARSE_EMPTY}, {" \t\r\n", PARSE_EMPTY},
         {"insert 1 \"A\" 1", PARSE_UNKNOWN_COMMAND},
         {"SELECT_ALL_EXTRA", PARSE_UNKNOWN_COMMAND},
         {"SELECT1", PARSE_UNKNOWN_COMMAND}, {".exitnow", PARSE_UNKNOWN_COMMAND},
-        {"UPDATE 1 \"A\" 1", PARSE_UNKNOWN_COMMAND},
-        {"DELETE 1", PARSE_UNKNOWN_COMMAND}, {".stats", PARSE_UNKNOWN_COMMAND},
+        {"UPDATE 1 \"A\" 1", PARSE_OK},
+        {"DELETE 1", PARSE_OK}, {".stats", PARSE_OK},
         {"SELECT", PARSE_INVALID_SYNTAX}, {"INSERT", PARSE_INVALID_SYNTAX},
         {"SELECT -1", PARSE_INVALID_SYNTAX}, {"SELECT +1", PARSE_INVALID_SYNTAX},
         {"SELECT 1.5", PARSE_INVALID_SYNTAX}, {"SELECT 0x10", PARSE_INVALID_SYNTAX},

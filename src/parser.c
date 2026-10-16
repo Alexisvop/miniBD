@@ -67,6 +67,38 @@ static ParseStatus parse_name(const char **cursor, char *name)
     return PARSE_OK;
 }
 
+static bool consume_word(const char **cursor, const char *expected)
+{
+    const char *start = *cursor;
+    const char *end = start;
+    while (*end != '\0' && !isspace((unsigned char)*end)) ++end;
+    if (!token_equals(start, (size_t)(end - start), expected)) return false;
+    *cursor = end;
+    skip_space(cursor);
+    return true;
+}
+
+static ParseStatus parse_filter(const char **cursor, AgeFilter *filter)
+{
+    if (!consume_word(cursor, "WHERE") || !consume_word(cursor, "age")) return PARSE_INVALID_SYNTAX;
+    const struct { const char *text; AgeOperator op; } operators[] = {
+        {"=", AGE_FILTER_EQ}, {"!=", AGE_FILTER_NE}, {"<", AGE_FILTER_LT},
+        {"<=", AGE_FILTER_LE}, {">", AGE_FILTER_GT}, {">=", AGE_FILTER_GE}
+    };
+    for (size_t i = 0; i < sizeof(operators) / sizeof(operators[0]); ++i) {
+        if (consume_word(cursor, operators[i].text)) {
+            uint32_t value;
+            ParseStatus status = parse_number(cursor, MINIDB_AGE_MAX, &value);
+            if (status != PARSE_OK) return status;
+            filter->op = operators[i].op;
+            filter->value = (uint8_t)value;
+            skip_space(cursor);
+            return PARSE_OK;
+        }
+    }
+    return PARSE_INVALID_SYNTAX;
+}
+
 ParseStatus parser_parse(const char *input, Command *output)
 {
     Command command = {0};
@@ -82,10 +114,18 @@ ParseStatus parser_parse(const char *input, Command *output)
     }
     if (token_equals(start, length, "INSERT")) {
         command.type = COMMAND_INSERT;
+    } else if (token_equals(start, length, "UPDATE")) {
+        command.type = COMMAND_UPDATE;
+    } else if (token_equals(start, length, "DELETE")) {
+        command.type = COMMAND_DELETE;
     } else if (token_equals(start, length, "SELECT")) {
         command.type = COMMAND_SELECT;
     } else if (token_equals(start, length, "SELECT_ALL")) {
         command.type = COMMAND_SELECT_ALL;
+    } else if (token_equals(start, length, ".stats")) {
+        command.type = COMMAND_STATS;
+    } else if (token_equals(start, length, ".btree")) {
+        command.type = COMMAND_BTREE;
     } else if (token_equals(start, length, ".help")) {
         command.type = COMMAND_HELP;
     } else if (token_equals(start, length, ".exit")) {
@@ -94,14 +134,15 @@ ParseStatus parser_parse(const char *input, Command *output)
         return PARSE_UNKNOWN_COMMAND;
     }
     skip_space(&p);
-    if (command.type == COMMAND_INSERT || command.type == COMMAND_SELECT) {
+    if (command.type == COMMAND_INSERT || command.type == COMMAND_UPDATE ||
+        command.type == COMMAND_SELECT || command.type == COMMAND_DELETE) {
         ParseStatus status = parse_number(&p, UINT32_MAX, &command.record.id);
         if (status != PARSE_OK) {
             return status;
         }
         skip_space(&p);
     }
-    if (command.type == COMMAND_INSERT) {
+    if (command.type == COMMAND_INSERT || command.type == COMMAND_UPDATE) {
         ParseStatus status = parse_name(&p, command.record.name);
         if (status != PARSE_OK) {
             return status;
@@ -114,6 +155,10 @@ ParseStatus parser_parse(const char *input, Command *output)
         }
         command.record.age = (uint8_t)age;
         skip_space(&p);
+    }
+    if (command.type == COMMAND_SELECT_ALL && *p != '\0') {
+        ParseStatus status = parse_filter(&p, &command.filter);
+        if (status != PARSE_OK) return status;
     }
     if (*p != '\0') {
         return PARSE_INVALID_SYNTAX;

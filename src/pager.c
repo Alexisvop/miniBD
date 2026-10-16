@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -17,6 +18,11 @@ struct Pager {
     int fd;
     uint32_t page_count;
     bool failed;
+    bool editing;
+    uint32_t initial_pages;
+    uint32_t undo_count;
+    uint32_t undo_ids[MINIDB_MAX_PAGES];
+    CachedPage *undo[MINIDB_MAX_PAGES];
     CachedPage *pages[MINIDB_MAX_PAGES];
 };
 
@@ -109,6 +115,15 @@ DbStatus pager_write(Pager *pager, uint32_t id, uint8_t **output)
 {
     DbStatus status = load_page(pager, id);
     if (status == DB_OK) {
+        if (pager->editing && id < pager->initial_pages && pager->undo[id] == NULL) {
+            CachedPage *backup = malloc(sizeof(*backup));
+            if (backup == NULL) {
+                return DB_NO_MEMORY;
+            }
+            memcpy(backup, pager->pages[id], sizeof(*backup));
+            pager->undo[id] = backup;
+            pager->undo_ids[pager->undo_count++] = id;
+        }
         pager->pages[id]->dirty = true;
         *output = pager->pages[id]->bytes;
     }
@@ -157,7 +172,7 @@ static DbStatus flush_page(Pager *pager, uint32_t id)
 
 DbStatus pager_sync(Pager *pager)
 {
-    if (pager->failed) {
+    if (pager->failed || pager->editing) {
         return DB_IO_ERROR;
     }
     bool dirty = false;
@@ -191,8 +206,47 @@ DbStatus pager_sync(Pager *pager)
     return DB_OK;
 }
 
+DbStatus pager_begin(Pager *pager)
+{
+    if (pager->failed || pager->editing) {
+        return DB_IO_ERROR;
+    }
+    pager->editing = true;
+    pager->initial_pages = pager->page_count;
+    return DB_OK;
+}
+
+void pager_commit(Pager *pager)
+{
+    for (uint32_t i = 0; i < pager->undo_count; ++i) {
+        uint32_t id = pager->undo_ids[i];
+        free(pager->undo[id]);
+        pager->undo[id] = NULL;
+    }
+    pager->undo_count = 0;
+    pager->editing = false;
+}
+
+void pager_rollback(Pager *pager)
+{
+    if (!pager->editing) {
+        return;
+    }
+    for (uint32_t i = 0; i < pager->undo_count; ++i) {
+        uint32_t id = pager->undo_ids[i];
+        memcpy(pager->pages[id], pager->undo[id], sizeof(CachedPage));
+    }
+    for (uint32_t id = pager->initial_pages; id < pager->page_count; ++id) {
+        free(pager->pages[id]);
+        pager->pages[id] = NULL;
+    }
+    pager->page_count = pager->initial_pages;
+    pager_commit(pager);
+}
+
 DbStatus pager_discard(Pager *pager)
 {
+    pager_rollback(pager);
     DbStatus status = close(pager->fd) < 0 ? DB_IO_ERROR : DB_OK;
     for (uint32_t i = 0; i < pager->page_count; ++i) {
         free(pager->pages[i]);
@@ -203,6 +257,7 @@ DbStatus pager_discard(Pager *pager)
 
 DbStatus pager_close(Pager *pager)
 {
+    pager_rollback(pager);
     DbStatus status = pager_sync(pager);
     DbStatus close_status = pager_discard(pager);
     return status == DB_OK ? close_status : status;

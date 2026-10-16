@@ -11,6 +11,8 @@ typedef enum {
     DB_UNSUPPORTED_VERSION,
     DB_INVALID_RECORD,
     DB_DUPLICATE_ID,
+    DB_INVALID_COMMAND,
+    DB_DELETED,
     DB_NOT_FOUND
 } DbStatus;
 

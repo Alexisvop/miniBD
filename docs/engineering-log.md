@@ -174,3 +174,231 @@ Stop at phase 2. When requested, phase 3 will design the B+ tree node format,
 separator semantics, search, leaf/internal splits and structural validation,
 reusing the pager. The phase 2 disk format may require an explicit versioned
 migration when those layouts and invariants change.
+
+## 2026-10-14 — Phase 3: persistent secondary B+ tree
+
+### Baseline and design
+
+Read `recursos/Proyect_Fase3.md`, the main specification and existing source,
+format, architecture and log. The repository was clean on main, tracking
+origin/main. All eight phase 2 suites passed before changes. No commits, remote
+operations or edits to the specifications were performed.
+
+Chose a secondary index mapping uint32 IDs to existing data-page/slot locations.
+Full records remain in 70-byte slots. Reused the Pager and codec. Format v2 is
+required because index pages interleave with data pages and root ID is now active;
+metadata also tracks the last data page. V1 is rejected without writes. Migration
+was deferred rather than attempting to rewrite a user's file in place. The old
+format document is retained as a historical reference.
+
+Leaf capacity is (4096-16)/12 = 340; internal capacity is floor((4096-20)/8) = 509.
+No artificially small capacities are used. Separators are exact right-subtree
+minima; equality routes right. Leaf links follow sorted tree order. Root identity
+is stored once in metadata. Data pages retain their prior layout and validation.
+
+### Implementation and error consistency
+
+Added BTree search, recursive insertion, leaf/internal/root splits, ordered scans,
+structural validation and tree dumping. SELECT always uses the tree. SELECT_ALL
+now sorts by ID through leaf links, while record pages retain insertion order.
+Added .stats and .btree in parser/executor/REPL. Stats separate counts derived
+from persistent pages from session-only successful split events.
+
+The Pager gained a nonnested memory savepoint, not a replacement implementation.
+Before-images are captured lazily on the first write to an existing page; rollback
+restores bytes/dirty flags and removes newly allocated pages. An ID list keeps
+commit/rollback work proportional to changed pages. Storage restores BTree root
+and counters on failure, and publishes metadata/row counters only after all
+fallible insertion steps succeed. Sync inside a savepoint is rejected.
+
+This covers ordinary allocation/capacity failures during split propagation. It
+is not disk atomicity or WAL. The normal-close fsync policy, no concurrent access
+and poisoned Pager after write/sync failure remain. Existing unflushed successful
+inserts survive a later rolled-back insertion.
+
+### Verification actually performed
+
+- Debug and Release compilation succeeded under the strict warning options.
+- All **11/11 CTest entries passed** in Debug and in an ASan/UBSan build with
+  leak detection and halt-on-error enabled, with no findings. LeakSanitizer ran
+  outside the sandbox to avoid its previously established ptrace restriction.
+- Preserved the eight suites, updating legitimate version/layout/capacity/order
+  and .stats expectations. Added btree, btree_large and btree_corruption entries.
+  Binary-format fixtures necessarily changed from v1; legacy rejection is now
+  tested separately using a genuine empty v1 metadata page.
+- Inserted 10000 and 100000 rows in ascending, descending and deterministically
+  shuffled order. Compared every successful lookup, missing odd key and full
+  sorted traversal against a simple independent model before and after reopen.
+  Continued insertion after reopen, including UINT32_MAX, was also checked.
+- At 100000 rows, ascending order produced height 3 / 588 leaves / 3 internal
+  nodes, with 587 leaf, 1 internal and 2 root split events. Descending produced
+  height 3 / 584 leaves / 3 internal nodes. Random order produced height 2 /
+  449 leaves / 1 internal node. Thus actual internal overflow and root growth
+  were exercised, even though the random case alone did not reach that depth.
+- Indexed INSERT capacity testing reached 176900 ascending records before the
+  next insertion hit the total page budget; the rejected append preserved all
+  invariants and reopen succeeded. The previous 237510 figure remains only a
+  data-only upper bound because index pages now consume the same file budget.
+- Injected failure at each allocation of inserts following 0, 340, 348 and 86870
+  rows: 3, 5, 3 and 7 failure positions respectively. These exercise new data pages,
+  leaf/root splits and internal/root propagation. Each failed insertion restored
+  counts/root/session metrics and left the closed file byte-for-byte unchanged.
+- Added a follow-up regression for restoring dirty flags after earlier unflushed
+  inserts; the updated failures suite passed again in Debug and with sanitizers.
+- Corrupted a genuine three-level tree to test cycles, aliased/out-of-range
+  references, bad separators, unequal depths, occupancy, leaf chains, record
+  locations and orphan pages. Rejected files remained unchanged. Prior record,
+  header, truncation, I/O and memory-failure regressions continue to pass.
+- Executed two CLI processes: insert IDs 30,10,20, observe sorted results 10,20,30,
+  inspect .stats/.btree, close, reopen and recover the same rows/tree. The dump
+  showed 10->(2,1), 20->(2,2), 30->(2,0), confirming that records retain insertion
+  order while leaf keys sort. Session split counters reset on reopen.
+- Valgrind was not run. No crash recovery, concurrency or deletion claim is made.
+
+### Benchmark
+
+Added a standalone benchmark target excluded from CTest. It compares indexed
+lookup with a benchmark-only phase 2 sequential scan adapted to mixed-page v2
+files. Both caches are fully populated, both methods use the same 2000 queries
+(75% hits), each is warmed up, five timed trials alternate method order, and
+result checksums agree. Creation/open/validation/fsync are excluded from timing.
+
+Executed on Arch Linux x86_64, kernel 7.2.9-arch1-1, Intel i5-1235U, GCC 16.2.1,
+Release -O3 without sanitizers. Median indexed/sequential batch milliseconds:
+1000 rows: 0.170638 / 0.675523; 10000: 0.233652 / 7.107775;
+100000: 0.571701 / 156.828272. Conditions, limitations and the exact CSV are in
+benchmarks/. These are cached CPU measurements, not disk-latency or production
+throughput results. The machine was not CPU-pinned or frequency-isolated.
+
+### Files, study and next step
+
+New: include/btree.h, src/btree.c, tests/test_btree.c,
+tests/test_btree_corruption.c, benchmarks/lookup.c, benchmark documentation/CSV,
+docs/btree-design.md and the historical v1 format reference. Updated Pager,
+Storage, parser/executor/REPL interfaces, version/diagnostics, CMake, existing
+tests, README, architecture, storage format and this log.
+
+Study fanout versus height, upper/lower bounds, exact separator semantics,
+leaf versus internal split promotion, secondary-index record references,
+leaf-chain scans, tree/data coverage invariants and the difference between
+in-memory rollback and durable crash-safe transactions.
+
+Suggested commit:
+`feat(index): add persistent B+ tree, rollback, validation, and lookup benchmark`.
+
+Stop at phase 3. Await the user's phase 4 instructions; do not implement updates,
+deletes or deletion rebalancing automatically.
+
+## 2026-10-15 — Phase 4: updates, logical deletion and filtered execution
+
+### Inspection and design
+
+The first attempt found `recursos/Proyect_Fase4.md` empty and stopped after
+verifying all 11 existing tests. After the user saved its contents, read the full
+specification, current interfaces and code, format and architecture documents.
+The workspace already contained the uncommitted phase 3 implementation; those
+changes were retained. No commits, remote operations or modifications to user
+databases were performed.
+
+Selected a per-data-page tombstone bitmap in former reserved bytes 8..15. Each
+slot has one bit, least significant bit first; only bits for occupied slots may
+be set. This preserves 70-byte records, 58 slots/page and all tree capacities.
+Metadata offset 36 stores active count separately from total slots at offset 20.
+Because v2 requires these bytes to be zero, bumped the format to v3 instead of
+silently accepting incompatible data. V1/v2 are rejected unchanged. Preserved
+`docs/storage-format-v2.md` as a historical reference; migration remains absent.
+
+### Implementation
+
+- UPDATE uses the B+ tree to find an active row and rewrites name/age in the same
+  slot and ID. Only the data page is dirtied. Missing/deleted IDs have distinct
+  controlled statuses, and invalid payloads are rejected before mutation.
+- DELETE sets the slot bit and decrements active count. Payload, total count,
+  index key/location and tree links remain. Repeated deletion returns DB_DELETED.
+  SELECT reports deleted state without exposing payload; ordered scans omit it.
+- INSERT of the same deleted ID replaces its payload and clears its bit, using
+  the existing slot and single index entry. This works even at the page limit.
+  Active duplicates remain errors; tombstones are not reused for unrelated IDs.
+- All mutations use the existing in-memory savepoint. UPDATE needs one page
+  before-image; DELETE/reactivation need data and metadata before-images. Failure
+  restores dirty flags/bytes and leaves scalar counts unpublished. No B+ tree
+  structural changes occur for these operations.
+- Added WHERE age predicates with =, !=, <, <=, >, >= and numeric range 0..150.
+  The parser requires separate whitespace-delimited tokens and rejects malformed
+  operators/extra expressions. Executor applies the predicate to active rows
+  delivered by the ID-ordered scan. There is no age index or optimizer.
+- Refactored Executor to return ExecutionResult (DbStatus, row count, stats) and
+  use optional row/node callbacks. It performs no terminal output. BTree exposes
+  a borrowed BTreeNodeView visitor; Storage forwards inspection without printing.
+  REPL handles all formatting and reports zero matches as OK: 0 rows.
+- .stats now separates total allocated records, active/deleted rows, total index
+  entries and data/index pages. .btree still displays retained deleted keys.
+- Open validates bitmap boundaries, active counters and payloads including
+  tombstones, while preserving all prior tree/data invariants. The record codec
+  itself is unchanged because deletion state resides outside the record payload.
+
+### Verification actually executed
+
+- The 11 phase 3 tests passed before changes and after initial integration.
+- Added queries, mixed, tombstones and cli_queries, retaining the original 11.
+  The final Debug run passed **15/15 tests** with strict compiler warnings.
+- The sanitizer configuration passed **15/15 tests** with ASan, UBSan,
+  detect_leaks=1 and halt-on-error enabled, with no findings. The run used the
+  established execution-outside-sandbox workaround for LeakSanitizer/ptrace.
+- Release compilation also succeeded, including the standalone benchmark target.
+  No phase 4 benchmark run/measurement or Valgrind result is claimed.
+- Queries tested UPDATE existing/missing/deleted IDs, invalid payloads, repeated
+  deletion, reinsertion, empty scans, every age operator, numeric bounds,
+  malformed commands, no-terminal structured execution, callback errors and
+  close/reopen behavior. IDs 0 and UINT32_MAX and ages 0 and 150 were exercised.
+- Mixed tests executed **30000 operations over 3000 IDs** against an independent
+  model, checking values, deleted/missing states, row counts, all filter operators,
+  sorted results and tree invariants. Six reopen cycles rechecked the model.
+- Tombstone tests exercised slots 0,7,8,31,32,56,57 and compared every index page
+  byte-for-byte before/after UPDATE/DELETE/reactivation. Index pages, page counts
+  and split counters stayed unchanged. Bitmap/count corruption, unused/high bits,
+  invalid deleted payloads and a genuine v2 image were rejected without writes.
+- Allocation failures were injected at each UPDATE/DELETE/reactivation snapshot;
+  after rejection and close, file bytes matched the baseline. New-operation
+  write/fsync failures propagated and poisoned the Pager, preventing retries.
+  Earlier split/memory/I/O regressions remain. Capacity tests now also delete and
+  reactivate the same ID at the page limit without adding an entry or slot.
+- Separate CLI processes demonstrated persistence: session 1 inserted IDs 3,1,2,
+  updated 1 to Alexis Perez/22, deleted 2 and filtered age>=21, returning IDs 1,3.
+  .stats reported total=3, active=2, deleted=1, index_entries=3. Session 2 retrieved
+  the updated row, reported ID 2 as deleted, reactivated it as Carlos returned/23,
+  and filtered age<=23, returning IDs 1,2. Stats became active=3, deleted=0 with
+  the same three entries/pages. CLI tests also confirmed reactivation saved at EOF.
+- Checked that Executor/Storage/BTree contain no terminal output calls. Source
+  formatting checks were run; no whitespace issues were found.
+
+### Limitations and learning checkpoint
+
+Logical deletion neither recovers space nor erases bytes. Tree occupancy includes
+historical deleted IDs. Age predicates scan the entire ID index and skip deleted
+rows, so high tombstone counts still cost work. No physical deletion, merge,
+redistribution, compaction or new-ID slot reuse exists.
+
+Successful mutations are accepted in memory; file writes happen at normal close
+or explicit sync. Partial writes can leave a bitmap inconsistent with its active
+counter. Memory rollback and fsync do not provide atomic crash recovery, WAL,
+transactions or concurrent access. Output errors after accepted mutations do not
+roll them back. Open-time corruption checks cannot detect every consistent bit
+change without checksums. Old files require an older executable; migration is not
+included. Phase 3 benchmark data remain historical, not phase 4 claims.
+
+Study logical versus physical deletion, visibility versus structural index
+membership, stable record references, active versus allocated row counts, scan
+predicates versus indexed search, callback ownership and streaming errors,
+structured execution results and memory rollback versus durable transactions.
+
+New files: tests/test_queries.c, tests/test_mixed.c, tests/test_tombstones.c,
+tests/test_cli_queries.cmake and docs/storage-format-v2.md. Updated Storage,
+Executor, parser, status, REPL/main, structured BTree inspection interfaces,
+CMake/version, applicable existing tests and the required documentation. Pager
+and record serialization algorithms were reused without phase 4 changes.
+
+Suggested commit:
+`feat(query): add updates, tombstones, age filters, and structured execution results`.
+
+Stop after phase 4. Phase 5 requires a new user instruction.

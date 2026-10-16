@@ -142,12 +142,126 @@ static DbStatus unused_visitor(const Record *record, void *context)
     return DB_OK;
 }
 
+static uint8_t *read_file(const char *path, size_t *length)
+{
+    FILE *file = fopen(path, "rb");
+    CHECK(file != NULL && fseek(file, 0, SEEK_END) == 0);
+    long size = ftell(file);
+    CHECK(size >= 0 && fseek(file, 0, SEEK_SET) == 0);
+    *length = (size_t)size;
+    uint8_t *bytes = malloc(*length);
+    CHECK(bytes != NULL && fread(bytes, 1, *length, file) == *length);
+    CHECK(fclose(file) == 0);
+    return bytes;
+}
+
+static void test_insert_rollback(uint32_t count)
+{
+    char path[64];
+    temporary_path(path);
+    Storage *storage;
+    CHECK(storage_open(path, &storage) == DB_OK);
+    for (uint32_t i = 0; i < count; ++i) {
+        Record row = {i, "Rollback", 42};
+        CHECK(storage_insert(storage, &row) == DB_OK);
+    }
+    CHECK(storage_close(storage) == DB_OK);
+    size_t baseline_size;
+    uint8_t *baseline = read_file(path, &baseline_size);
+    bool succeeded = false;
+    unsigned int failed_allocations = 0;
+    for (int budget = 0; budget < 20; ++budget) {
+        CHECK(storage_open(path, &storage) == DB_OK);
+        StorageStats before, after;
+        CHECK(storage_validate(storage, &before) == DB_OK);
+        Record row = {count, "Rollback", 42};
+        allocation_budget = budget;
+        DbStatus result = storage_insert(storage, &row);
+        allocation_budget = -1;
+        CHECK(storage_validate(storage, &after) == DB_OK);
+        if (result == DB_OK) {
+            CHECK(after.records == count + 1U);
+            if (count == 340) CHECK(after.leaf_splits == 1 && after.root_splits == 1);
+            if (count == 86870) CHECK(after.internal_splits == 1 && after.root_splits == 1);
+            CHECK(storage_close(storage) == DB_OK);
+            succeeded = true;
+            break;
+        }
+        CHECK(result == DB_NO_MEMORY);
+        ++failed_allocations;
+        CHECK(after.records == count && after.pages == before.pages);
+        CHECK(after.tree.height == before.tree.height && after.tree.leaves == before.tree.leaves);
+        CHECK(after.leaf_splits == 0 && after.internal_splits == 0 && after.root_splits == 0);
+        CHECK(storage_select(storage, count, &row) == DB_NOT_FOUND);
+        if (count > 0) CHECK(storage_select(storage, count - 1U, &row) == DB_OK);
+        CHECK(storage_close(storage) == DB_OK);
+        size_t actual_size;
+        uint8_t *actual = read_file(path, &actual_size);
+        CHECK(actual_size == baseline_size && memcmp(actual, baseline, actual_size) == 0);
+        free(actual);
+    }
+    CHECK(succeeded && failed_allocations >= 3);
+    free(baseline);
+    CHECK(unlink(path) == 0);
+    printf("Rollback: %u prior records, %u allocation failure positions verified.\n", count, failed_allocations);
+}
+
+static void test_change_failure(unsigned int operation)
+{
+    char path[64];
+    temporary_path(path);
+    Storage *storage;
+    CHECK(storage_open(path, &storage) == DB_OK);
+    Record row = {1, "Before", 21};
+    CHECK(storage_insert(storage, &row) == DB_OK);
+    if (operation == 2) CHECK(storage_delete(storage, 1) == DB_OK);
+    CHECK(storage_close(storage) == DB_OK);
+    size_t baseline_size;
+    uint8_t *baseline = read_file(path, &baseline_size);
+    int allocations = operation == 0 ? 1 : 2;
+    for (int budget = 0; budget < allocations; ++budget) {
+        CHECK(storage_open(path, &storage) == DB_OK);
+        row = (Record){1, "After", 150};
+        allocation_budget = budget;
+        DbStatus status = operation == 0 ? storage_update(storage, &row) :
+                          operation == 1 ? storage_delete(storage, 1) : storage_insert(storage, &row);
+        allocation_budget = -1;
+        CHECK(status == DB_NO_MEMORY);
+        StorageStats stats;
+        CHECK(storage_validate(storage, &stats) == DB_OK && stats.records == 1);
+        CHECK(stats.active_records == (operation == 2 ? 0U : 1U));
+        CHECK(storage_select(storage, 1, &row) == (operation == 2 ? DB_DELETED : DB_OK));
+        if (operation != 2) CHECK(strcmp(row.name, "Before") == 0 && row.age == 21);
+        CHECK(storage_close(storage) == DB_OK);
+        size_t actual_size;
+        uint8_t *actual = read_file(path, &actual_size);
+        CHECK(actual_size == baseline_size && memcmp(actual, baseline, actual_size) == 0);
+        free(actual);
+    }
+    free(baseline);
+    CHECK(storage_open(path, &storage) == DB_OK);
+    row = (Record){1, "After", 150};
+    CHECK((operation == 0 ? storage_update(storage, &row) :
+           operation == 1 ? storage_delete(storage, 1) : storage_insert(storage, &row)) == DB_OK);
+    /* Disk failures occur at sync/close, not when changing cache bytes. */
+    if (operation == 0) write_budget = 0;
+    else fail_sync = true;
+    CHECK(storage_sync(storage) == DB_IO_ERROR);
+    write_budget = -1; fail_sync = false;
+    unsigned int previous_writes = writes;
+    CHECK(storage_update(storage, &row) == DB_IO_ERROR);
+    CHECK(storage_delete(storage, 1) == DB_IO_ERROR);
+    CHECK(storage_insert(storage, &row) == DB_IO_ERROR);
+    CHECK(storage_close(storage) == DB_IO_ERROR && writes == previous_writes);
+    CHECK(unlink(path) == 0);
+}
+
 int main(void)
 {
     char path[64];
     temporary_path(path);
     Storage *storage;
-    for (int budget = 0; budget < 3; ++budget) {
+    for (int budget = 0; budget < 4; ++budget) {
         allocation_budget = budget;
         CHECK(storage_open(path, &storage) == DB_NO_MEMORY && storage == NULL);
         allocation_budget = -1;
@@ -169,7 +283,7 @@ int main(void)
     CHECK(storage_close(storage) == DB_OK);
     CHECK(!interrupt_write && !interrupt_sync);
 
-    /* Existing DB: Storage, Pager, metadata, temporary IDs, data page. */
+    /* Existing DB: Storage, Pager, metadata, leaf, data page. */
     for (int budget = 0; budget < 5; ++budget) {
         allocation_budget = budget;
         CHECK(storage_open(path, &storage) == DB_NO_MEMORY && storage == NULL);
@@ -235,6 +349,27 @@ int main(void)
     CHECK(storage_close(storage) == DB_IO_ERROR);
     fail_close = false;
     CHECK(unlink(path) == 0);
+    /* Rollback must preserve dirty flags from earlier, unsynchronized inserts. */
+    temporary_path(path);
+    CHECK(storage_open(path, &storage) == DB_OK);
+    row = (Record){10, "Previously accepted", 42};
+    CHECK(storage_insert(storage, &row) == DB_OK);
+    row.id = 11;
+    allocation_budget = 2;
+    CHECK(storage_insert(storage, &row) == DB_NO_MEMORY);
+    allocation_budget = -1;
+    CHECK(storage_close(storage) == DB_OK);
+    CHECK(storage_open(path, &storage) == DB_OK);
+    CHECK(storage_select(storage, 10, &row) == DB_OK);
+    CHECK(storage_select(storage, 11, &row) == DB_NOT_FOUND);
+    CHECK(storage_record_count(storage) == 1);
+    CHECK(storage_close(storage) == DB_OK);
+    CHECK(unlink(path) == 0);
+    for (unsigned int operation = 0; operation < 3; ++operation) test_change_failure(operation);
+    test_insert_rollback(0);
+    test_insert_rollback(340);
+    test_insert_rollback(348);
+    test_insert_rollback(86870);
     puts("Failures: allocation, permissions, short I/O, EINTR, ENOSPC, sync and close passed.");
     return 0;
 }

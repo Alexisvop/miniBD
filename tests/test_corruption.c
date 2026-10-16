@@ -10,7 +10,7 @@ static void reject_unchanged(const char *path, const uint8_t *bytes, size_t leng
     CHECK(fclose(file) == 0);
     Storage *storage;
     CHECK(storage_open(path, &storage) == expected && storage == NULL);
-    uint8_t copy[3 * MINIDB_PAGE_SIZE];
+    uint8_t copy[4 * MINIDB_PAGE_SIZE];
     file = fopen(path, "rb");
     CHECK(file != NULL);
     CHECK(fread(copy, 1, sizeof(copy), file) == length);
@@ -31,34 +31,34 @@ int main(void)
     row.id = 2;
     CHECK(storage_insert(storage, &row) == DB_OK);
     CHECK(storage_close(storage) == DB_OK);
-    uint8_t original[3 * MINIDB_PAGE_SIZE] = {0};
+    uint8_t original[4 * MINIDB_PAGE_SIZE] = {0};
     FILE *file = fopen(path, "rb");
     CHECK(file != NULL);
-    CHECK(fread(original, 1, sizeof(original), file) == 2 * MINIDB_PAGE_SIZE);
+    CHECK(fread(original, 1, sizeof(original), file) == 3 * MINIDB_PAGE_SIZE);
     CHECK(!ferror(file));
     CHECK(fclose(file) == 0);
 
     const struct { size_t offset; uint8_t value; DbStatus status; } cases[] = {
-        {0, 'X', DB_INVALID_FORMAT}, {8, 2, DB_UNSUPPORTED_VERSION},
-        {12, 1, DB_INVALID_FORMAT}, {16, 3, DB_INVALID_FORMAT},
+        {0, 'X', DB_INVALID_FORMAT}, {8, 1, DB_UNSUPPORTED_VERSION},
+        {12, 1, DB_INVALID_FORMAT}, {16, 4, DB_INVALID_FORMAT},
         {20, 3, DB_INVALID_FORMAT}, {20, 0, DB_INVALID_FORMAT},
-        {24, 1, DB_INVALID_FORMAT}, {28, 2, DB_INVALID_FORMAT},
-        {32, 1, DB_INVALID_FORMAT}, {4095, 1, DB_INVALID_FORMAT},
-        {4096, 3, DB_INVALID_FORMAT}, {4100, 59, DB_INVALID_FORMAT},
-        {4100, 0, DB_INVALID_FORMAT}, {4104, 1, DB_INVALID_FORMAT},
-        {4112 + 4, 151, DB_INVALID_FORMAT}, {4112 + 5, 0, DB_INVALID_FORMAT},
-        {4112 + 5, 65, DB_INVALID_FORMAT}, {4112 + 6, 0xff, DB_INVALID_FORMAT},
-        {4112 + 6, 0, DB_INVALID_FORMAT}, {4112 + 69, 1, DB_INVALID_FORMAT},
-        {4112 + 70, 1, DB_INVALID_FORMAT},
-        {4112 + 140, 1, DB_INVALID_FORMAT}, {8191, 1, DB_INVALID_FORMAT}
+        {24, 0, DB_INVALID_FORMAT}, {28, 2, DB_INVALID_FORMAT},
+        {36, 1, DB_INVALID_FORMAT}, {4095, 1, DB_INVALID_FORMAT},
+        {8192, 3, DB_INVALID_FORMAT}, {8196, 59, DB_INVALID_FORMAT},
+        {8196, 0, DB_INVALID_FORMAT}, {8200, 1, DB_INVALID_FORMAT},
+        {8208 + 4, 151, DB_INVALID_FORMAT}, {8208 + 5, 0, DB_INVALID_FORMAT},
+        {8208 + 5, 65, DB_INVALID_FORMAT}, {8208 + 6, 0xff, DB_INVALID_FORMAT},
+        {8208 + 6, 0, DB_INVALID_FORMAT}, {8208 + 69, 1, DB_INVALID_FORMAT},
+        {8208 + 70, 1, DB_INVALID_FORMAT},
+        {8208 + 140, 1, DB_INVALID_FORMAT}, {12287, 1, DB_INVALID_FORMAT}
     };
     uint8_t modified[sizeof(original)];
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         memcpy(modified, original, sizeof(original));
         modified[cases[i].offset] = cases[i].value;
-        reject_unchanged(path, modified, 2 * MINIDB_PAGE_SIZE, cases[i].status);
+        reject_unchanged(path, modified, 3 * MINIDB_PAGE_SIZE, cases[i].status);
     }
-    const size_t lengths[] = {1, 4095, 4096, 4097, 8191, 12288};
+    const size_t lengths[] = {1, 4095, 4096, 4097, 8192, 12287, 16384};
     for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i) {
         reject_unchanged(path, original, lengths[i], DB_INVALID_FORMAT);
     }
