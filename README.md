@@ -243,6 +243,5 @@ as part of this milestone.
 
 ## License
 
-No project license has been selected and no LICENSE file is present. Public
-visibility alone would not grant an open-source license. License selection remains
-with the project owner; this validation phase does not add one.
+MiniDB is licensed under the **MIT License**. See [LICENSE](LICENSE) for the
+full license text and copyright notice.
