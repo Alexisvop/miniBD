@@ -19,7 +19,9 @@ int __real_close(int fd);
 static int allocation_budget = -1;
 static int write_budget = -1;
 static bool deny_open;
-static bool fail_read;
+/* Fault flags are read by linker --wrap callbacks reached through other translation
+ * units. Keep the injected state observable even under Release optimization. */
+static volatile bool fail_read;
 static bool fail_sync;
 static bool fail_close;
 static bool zero_write;
