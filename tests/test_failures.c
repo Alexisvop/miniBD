@@ -22,6 +22,7 @@ static bool deny_open;
 /* Fault flags are read by linker --wrap callbacks reached through other translation
  * units. Keep the injected state observable even under Release optimization. */
 static volatile bool fail_read;
+static volatile unsigned int injected_read_failures;
 static bool fail_sync;
 static bool fail_close;
 static bool zero_write;
@@ -78,6 +79,7 @@ ssize_t __wrap_pread(int fd, void *buffer, size_t count, off_t offset)
         return -1;
     }
     if (fail_read) {
+        ++injected_read_failures;
         errno = EIO;
         return -1;
     }
@@ -292,7 +294,12 @@ int main(void)
         allocation_budget = -1;
     }
     fail_read = true;
-    CHECK(storage_open(path, &storage) == DB_IO_ERROR && storage == NULL);
+    DbStatus read_status = storage_open(path, &storage);
+    if (read_status != DB_IO_ERROR || storage != NULL) {
+        fprintf(stderr, "injected read: status=%d, storage=%p, wraps=%u, armed=%d\n",
+                (int)read_status, (void *)storage, (unsigned int)injected_read_failures, (int)fail_read);
+    }
+    CHECK(read_status == DB_IO_ERROR && storage == NULL);
     fail_read = false;
     interrupt_read = true;
     CHECK(storage_open(path, &storage) == DB_OK && !interrupt_read);
