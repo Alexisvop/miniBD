@@ -43,7 +43,7 @@ flowchart TD
 The REPL coordinates parsing/execution and formats output. Executor, Storage and
 BTree perform no terminal I/O. Main owns Storage; Storage owns Pager and tree
 state; the tree borrows Pager. Callbacks borrow rows/nodes for the call only and
-must not modify or close the database. See [architecture](docs/architecture.md).
+must not modify or close the database. See [architecture](docs/architecture.md) and the illustrated [visual guide](docs/visual-guide.md) for page types, data flow and indexed lookup.
 
 ## Storage Format
 
@@ -145,7 +145,13 @@ minidb> .exit
 
 Reopen the same path: `SELECT 1` returns the update; `SELECT 2` reports logical
 deletion; `INSERT 2 "José returned" 23` reactivates that slot. The reproducible
-[demo input](examples/demo.txt) also prints statistics and the tree:
+[demo input](examples/demo.txt) also prints statistics and the tree. To run a **safe two-session demonstration** with a fresh temporary database that is automatically deleted, use: 
+
+```sh
+sh scripts/demo.sh ./build/minidb
+```
+
+To run the input manually:
 
 ```sh
 ./build/minidb fresh-demo.db < examples/demo.txt
@@ -159,6 +165,8 @@ still produce exit 0; fatal storage/output errors return 1. `--help` opens no DB
 For debugging: `gdb --args ./build/minidb demo.db`.
 
 ## Testing
+
+[GitHub Actions CI](.github/workflows/ci.yml) runs all CTest suites in Debug, Release and ASan/UBSan builds on pushes to `main`, pull requests and manual dispatch. Check the Actions tab for actual results; a workflow file by itself does not prove a green run.
 
 ```sh
 ctest --test-dir build -LE stress --output-on-failure
