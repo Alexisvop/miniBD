@@ -2,8 +2,7 @@
 #include "executor.h"
 #include "test_support.h"
 
-#define KEY_COUNT 3000U
-#define OPERATIONS 30000U
+static uint32_t key_count = 3000U;
 
 typedef struct { bool exists, active; Record record; } ModelRow;
 typedef struct { ModelRow *model; uint32_t next; uint32_t matches; AgeFilter filter; } ModelScan;
@@ -19,9 +18,9 @@ static bool expected_match(uint8_t age, AgeFilter filter)
 static DbStatus compare_record(const Record *record, void *context)
 {
     ModelScan *scan = context;
-    while (scan->next < KEY_COUNT && (!scan->model[scan->next].active ||
+    while (scan->next < key_count && (!scan->model[scan->next].active ||
            !expected_match(scan->model[scan->next].record.age, scan->filter))) ++scan->next;
-    CHECK(scan->next < KEY_COUNT);
+    CHECK(scan->next < key_count);
     const Record *expected = &scan->model[scan->next].record;
     CHECK(record->id == expected->id && record->age == expected->age && strcmp(record->name, expected->name) == 0);
     ++scan->next;
@@ -32,7 +31,7 @@ static DbStatus compare_record(const Record *record, void *context)
 static void verify(Storage *storage, ModelRow *model)
 {
     uint32_t total = 0, active = 0;
-    for (uint32_t i = 0; i < KEY_COUNT; ++i) {
+    for (uint32_t i = 0; i < key_count; ++i) {
         Record record;
         DbStatus expected = !model[i].exists ? DB_NOT_FOUND : model[i].active ? DB_OK : DB_DELETED;
         CHECK(storage_select(storage, i, &record) == expected);
@@ -53,24 +52,27 @@ static void verify(Storage *storage, ModelRow *model)
         ExecutionSink sink = {.record = compare_record, .context = &scan};
         ExecutionResult result = executor_execute(storage, &command, &sink);
         uint32_t matches = 0;
-        for (uint32_t i = 0; i < KEY_COUNT; ++i)
+        for (uint32_t i = 0; i < key_count; ++i)
             if (model[i].active && expected_match(model[i].record.age, filter)) ++matches;
         CHECK(result.status == DB_OK && result.rows == matches && scan.matches == matches);
     }
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    bool stress = argc == 2 && strcmp(argv[1], "--stress") == 0;
+    uint32_t operations = stress ? 60000U : 30000U;
+    if (stress) key_count = 10000U;
     char path[64];
     temporary_path(path);
     Storage *storage;
     CHECK(storage_open(path, &storage) == DB_OK);
-    ModelRow *model = calloc(KEY_COUNT, sizeof(*model));
+    ModelRow *model = calloc(key_count, sizeof(*model));
     CHECK(model != NULL);
     uint32_t random = 0x5341a78fU;
-    for (uint32_t step = 0; step < OPERATIONS; ++step) {
+    for (uint32_t step = 0; step < operations; ++step) {
         random = random * 1664525U + 1013904223U;
-        uint32_t key = (random >> 8U) % KEY_COUNT;
+        uint32_t key = (random >> 8U) % key_count;
         unsigned int operation = (random >> 24U) % 4U;
         Command command = {.record = {.id = key, .age = (uint8_t)((random >> 16U) % 151U)}};
         CHECK(snprintf(command.record.name, sizeof(command.record.name), "row-%u-revision-%u", key, step) > 0);
@@ -98,6 +100,7 @@ int main(void)
     CHECK(storage_close(storage) == DB_OK);
     CHECK(unlink(path) == 0);
     free(model);
-    puts("Mixed model: 30000 operations, 3000 IDs, six reopen cycles and all age filters passed.");
+    printf("Mixed model: %u operations, %u IDs, %u reopen cycles and all age filters passed.\n",
+           operations, key_count, operations / 5000U);
     return 0;
 }

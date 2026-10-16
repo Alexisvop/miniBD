@@ -164,7 +164,7 @@ Filtering by age visits the ID-ordered index and checks active rows in Executor;
 there is no index on age. Complexity remains O(H + N) in total indexed entries,
 including tombstones, even when few rows match. Point searches still cost O(log N).
 
-## Executed tests
+## Historical baseline and current validation
 
 Original eight suites remain. Binary fixture expectations were adapted to the v2
 layout, `.stats` is now a valid command, scans expect ID order, and the data-only
@@ -207,3 +207,19 @@ or an ACID commit protocol.
 Phase 4 adds UPDATE and logical DELETE only. Physical deletion/rebalancing,
 space reclamation, WAL/recovery, concurrent writers, eviction and migration
 tooling remain future work. Do not interpret these tests as evidence of production durability.
+
+
+## Phase 5 evidence
+
+The 10000/100000-row ascending, descending and seeded random cases were rerun;
+the 100000-row heights/leaves/internal counts above were reproduced. A new
+100000-row height-3 test applies 33334 deletes, 13333 updates and 11112 same-ID
+reactivations, comparing every point result and ordered scan to a formula model
+before/after reopen. The allocated page count and tree node counts remain stable.
+The mixed model also runs 60000 operations over 10000 IDs, with full invariants,
+payloads and all six filters checked throughout 12 reopen cycles.
+
+All 19 Linux CTest entries pass in Debug, Release and sanitizer builds. No split,
+search, validation or serialization algorithm changed in phase 5. Detailed
+[testing evidence](testing.md) and [complexity/performance analysis](benchmarking.md)
+separate persistent structure guarantees from measured cache behavior.

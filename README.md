@@ -1,43 +1,137 @@
 # MiniDB
 
-An educational database engine written from scratch in C17, exploring systems
-programming and database internals as preparation for database engineering
-internships, including Oracle MDC. No existing database backend or external tree
-library is used. This is not a production database.
+## Overview
 
-**Current milestone: phase 4 — query execution, UPDATE, logical DELETE and age
-filters.** Persistent storage and the ID B+ tree from earlier phases remain.
+MiniDB is an educational database engine built from scratch in **C17** to study
+systems programming, persistent data structures and database internals. It uses
+no existing database backend or external tree library. The project demonstrates
+explicit binary storage, a persistent B+ tree, query execution, fault injection
+and reproducible performance experiments.
 
-**Compatibility:** application v0.4 uses **disk format v3**. Old v1/v2 files are
-rejected explicitly without modification. No migration tool is included; keep
-old databases and use a fresh path for this version.
+**Milestone: phase 5 engineering validation complete.** Application v0.5 uses
+**disk format v3**. Debug, Release and ASan/UBSan/leak-detection runs passed all
+19 Linux CTest entries in the recorded validation. These are finite test results,
+not production-readiness or crash-recovery guarantees.
 
-## Build and run
+## Features
 
-On Arch Linux, install missing tools if necessary:
+- INSERT, indexed SELECT, ordered SELECT_ALL, UPDATE and logical DELETE.
+- Same-ID reinsertion reactivates a deleted slot without duplicating the index key.
+- Six age comparisons, evaluated by scanning the ID index.
+- 4096-byte pages, explicit 70-byte records, UTF-8 names and little-endian fields.
+- Persistent B+ tree with leaf/internal/root splits and structural validation.
+- Pager cache, dirty tracking and memory rollback for ordinary mutation failures.
+- Structured Executor results, row/node callbacks, `.stats` and `.btree` inspection.
+- Seeded reference-model tests, corruption/fault tests, multi-process persistence
+  tests, sanitizer builds and standalone benchmarks with raw measurements.
 
-```sh
-sudo pacman -S --needed base-devel cmake ninja gdb
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
-./build/minidb queries.db
+## Architecture
+
+```mermaid
+flowchart TD
+    Main[Main: open, run, close] --> REPL
+    REPL --> Parser[Parser: text to Command]
+    Parser --> Executor[Executor: status, rows, callbacks]
+    Executor --> Storage[Storage: records and visibility]
+    Storage --> Tree[B+ tree: ID to page/slot]
+    Storage --> Codec[Record codec and tombstones]
+    Tree --> Pager[Pager: cache, savepoints, sync]
+    Codec --> Pager
+    Pager --> File[One database file]
 ```
 
-Required: GCC, CMake 3.16+, Ninja or Make, and C17/POSIX. No third-party runtime
-libraries are needed. Commands work in Fish. Make can be used with
-`-G "Unix Makefiles"` in a separate build directory. Build artifacts and databases
-are ignored by Git. `--help` does not open a database. Missing/zero-byte regular
-files are initialized; nonempty invalid files are never silently reinitialized.
+The REPL coordinates parsing/execution and formats output. Executor, Storage and
+BTree perform no terminal I/O. Main owns Storage; Storage owns Pager and tree
+state; the tree borrows Pager. Callbacks borrow rows/nodes for the call only and
+must not modify or close the database. See [architecture](docs/architecture.md).
 
-## Executed example
+## Storage Format
+
+Page 0 stores magic, version, page size/count, root, allocated slots and active
+rows. Data pages contain up to 58 records and an eight-byte tombstone bitmap.
+Each record stores uint32 ID, one-byte age/name length and up to 64 name bytes.
+All integers are encoded explicitly; native C structs are never dumped to disk.
+
+The 4096-page limit caps files at 16 MiB; index pages reduce available record
+capacity. Open validates and caches the entire file. **V1/v2 files are rejected
+without modification; no migration is provided.** Use a fresh path for v3.
+Missing/empty regular files initialize; nonempty invalid files never silently
+reinitialize. See [byte offsets and consistency rules](docs/storage-format.md).
+
+## B+ Tree Index
+
+Leaves hold up to 340 ID/location entries; internal nodes hold up to 509
+separators and 510 children. A separator equals the minimum key of its right
+subtree. Binary search routes point queries; linked leaves support ordered scans.
+Records remain in separate data pages, so sorted access can jump between them.
+
+Validation checks order/uniqueness, occupancy, references, separators, equal leaf
+depth, leaf links, cycles, reachability and index/record correspondence. Tombstones
+retain index keys; UPDATE/DELETE/reactivation do not rebalance or rewrite the tree.
+See [algorithms and invariants](docs/btree-design.md).
+
+## Query Execution
+
+| Command | Behavior |
+| --- | --- |
+| `INSERT <id> "<name>" <age>` | Insert, reject an active duplicate, or reactivate the same deleted ID |
+| `SELECT <id>` | Indexed lookup; distinguish missing and logically deleted IDs |
+| `UPDATE <id> "<name>" <age>` | Change an active row's name/age, preserving its ID/location |
+| `DELETE <id>` | Mark an active row deleted; repeated deletion returns a controlled error |
+| `SELECT_ALL` | Active rows in ascending ID order |
+| `SELECT_ALL WHERE age <op> <value>` | Ordered scan with `=`, `!=`, `<`, `<=`, `>` or `>=` |
+| `.stats` | Total/active/deleted rows, index entries, pages, nodes, height and session splits |
+| `.btree` | Physical index, including retained deleted keys |
+| `.help`, `.exit` | Help and normal close |
+
+Keywords are case-sensitive and `age` is lowercase. Separate filter tokens with
+whitespace (`age >= 21`). This is a small command language, not SQL. IDs are
+0..4294967295; age/filter values 0..150; names are 1..64 valid UTF-8 **bytes** in
+double quotes. ASCII controls/DEL and embedded quotes are rejected. Backslashes
+are literal; there is no escaping or Unicode normalization. Signed numbers,
+extra arguments, compound filters and semicolons are rejected. Input is limited
+to 4096 bytes per line; overlong/NUL-containing lines are discarded completely.
+
+Empty scans print `OK: 0 rows`. Executor returns status, affected/delivered row
+count and optional statistics through a structured interface; query callbacks
+may stop with an error. Age filters are **scans**, not indexed age lookups.
+
+## Build Instructions
+
+Linux requirements: GCC or Clang with C17/POSIX support, CMake 3.16+, Make or
+Ninja, and Python 3.8+ for the process-oracle test. No Python or third-party runtime
+library is required by the engine itself. The recorded platform used GCC on Arch.
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DMINIDB_BENCHMARKS=ON
+cmake --build build-release -j2
+ctest --test-dir build-release --output-on-failure
+```
+
+Add `-G Ninja` on first configuration if preferred; use a new build directory to
+change generator. For engine-only builds use `-DBUILD_TESTING=OFF`. Build products
+and database files are ignored by Git. Clean generated products with
+`cmake --build build --target clean`. Source-only clean Debug/Release builds were
+also verified without an existing cache or local specification files.
+
+## Usage
+
+```sh
+./build/minidb demo.db
+```
+
+Use a fresh filename for this example:
 
 ```text
 minidb> INSERT 3 "Mariana" 25
 OK: 1 row inserted
 minidb> INSERT 1 "Alexis" 21
 OK: 1 row inserted
-minidb> INSERT 2 "Carlos" 20
+minidb> INSERT 2 "José" 20
 OK: 1 row inserted
 minidb> UPDATE 1 "Alexis Perez" 22
 OK: 1 row updated
@@ -49,152 +143,98 @@ minidb> SELECT_ALL WHERE age >= 21
 minidb> .exit
 ```
 
-Reopen `queries.db`:
-
-```text
-minidb> SELECT 1
-1 | Alexis Perez | 22
-minidb> SELECT 2
-ERROR: record is logically deleted
-minidb> INSERT 2 "Carlos returned" 23
-OK: 1 row inserted
-minidb> SELECT_ALL WHERE age <= 23
-1 | Alexis Perez | 22
-2 | Carlos returned | 23
-minidb> .exit
-```
-
-Both sessions were executed in separate processes during phase 4 verification.
-Before reactivation, .stats reported 3 total records, 2 active, 1 deleted and 3
-index entries. Afterwards it reported 3 active, 0 deleted and still 3 entries.
-
-## Commands and semantics
-
-| Command | Behavior |
-| --- | --- |
-| `INSERT <id> "<name>" <age>` | Insert a new ID; reactivate the same slot if that ID is deleted; reject active duplicates |
-| `UPDATE <id> "<name>" <age>` | Update an active row's name/age; ID and index location remain unchanged |
-| `DELETE <id>` | Mark an active row deleted; keep its payload and index entry |
-| `SELECT <id>` | Indexed lookup; return a row only if active |
-| `SELECT_ALL` | All active rows in ascending ID order |
-| `SELECT_ALL WHERE age <op> <value>` | Scan active rows in ID order, applying one age comparison |
-| `.stats` | Total/active/deleted records, index entries, page/node counts, height and session split counters |
-| `.btree` | Full physical index structure, including retained deleted IDs |
-| `.help`, `.exit` | Help and normal close |
-
-Operators are `=`, `!=`, `<`, `<=`, `>` and `>=`. Use whitespace between WHERE,
-age, operator and value: `age >= 21` is supported; `age>=21` is not. The field
-name is lowercase `age`; keywords are uppercase. This is not SQL. There are no
-compound conditions, other filter fields or implicit conversions. An empty scan
-returns `OK: 0 rows`.
-
-IDs are decimal uint32 values (0..4294967295). Names require quotes and 1..64
-valid UTF-8 bytes; the length counts bytes, not characters. Age/filter values are
-integers in 0..150. Leading zeroes are allowed. Invalid UTF-8, ASCII controls/DEL
-in names, quotes inside names, signed values, extra arguments and semicolons are
-rejected. Backslash is literal, with no escaping. Blank lines and surrounding
-whitespace are accepted. Lines over 4096 bytes before LF, or containing NUL, are
-fully discarded. EOF processes a final command without a trailing newline.
-
-UPDATE/DELETE of a missing ID return `record not found`; an already deleted ID
-returns `record is logically deleted`. Repeated DELETE does not change counts.
-SELECT never returns deleted payloads. Primary-key changes are not implemented.
-
-Recoverable input/duplicate/missing/deleted/capacity errors print a diagnostic and
-allow the session to continue; .exit/EOF can still return 0. Fatal file, memory,
-format or I/O errors return 1. This is not a fail-fast transactional batch runner.
-
-## Architecture and persistence
-
-```text
-REPL -> Parser -> Command + AgeFilter
-  +-> Executor -> ExecutionResult + row/node callbacks
-        +-> Storage -> B+ tree -> Pager -> file
-              +-> 70-byte records and deletion bitmap -> Pager
-```
-
-Executor returns structured status, affected/delivered row count and optional
-statistics. It can run with no terminal or callbacks; only REPL formats output.
-Storage and BTree also provide structured data without printing. Callbacks borrow
-their arguments and propagate errors; they must not modify the scanned database.
-
-The B+ tree indexes ID only. Point lookups are indexed; **age filters are scans**
-over the ID-ordered entries, skipping tombstones and evaluating the age condition.
-There is no age index or query optimizer.
-
-The format uses 4096-byte pages and explicit little-endian fields. Records remain
-70 bytes; data pages retain 58 slots. A bitmap in each data header marks logical
-deletion. Leaves retain 340 ID/location entries; internal nodes retain 509 keys.
-Metadata stores total slots and active rows separately. Every index entry still
-maps to a data slot, including deleted ones, and open validates this relationship.
-
-UPDATE/DELETE/reactivation keep index pages unchanged. Memory savepoints revert
-ordinary allocation/capacity failures and preserve earlier accepted changes.
-`OK` means accepted in cache. **Normal .exit/EOF performs writes and file fsync;
-check the exit status.** Partial writes may leave data/bitmap/metadata inconsistent.
-There is no WAL, ACID commit, rollback of an entire session or crash recovery.
-Ctrl-C, process termination and power loss can lose changes or corrupt the file.
-
-Logical DELETE is not physical removal, secure erasure or space reclamation.
-Tombstones retain data slots and index entries. Same-ID reinsertion reuses its
-slot even at capacity, but deleted slots are not recycled for unrelated IDs.
-The total file limit stays 4096 pages (16 MiB), with no cache eviction or locking.
-Actual row capacity depends on index occupancy; an ascending test reached 176900
-allocated rows. Opening validates/caches the whole file without rebuilding the tree.
-
-See [architecture](docs/architecture.md), [v3 offsets and consistency](docs/storage-format.md),
-[B+ tree design](docs/btree-design.md), and [engineering log](docs/engineering-log.md).
-
-## Verification
-
-All 11 phase 3 CTest entries remain, including the 100000-row tree tests. Four new
-entries cover this milestone:
-
-| New test | Coverage |
-| --- | --- |
-| `queries` | Executor without terminal I/O, UPDATE/DELETE/reactivation, all six filters, zero matches, bounds, invalid commands, callback errors and reopen |
-| `mixed` | 30000 mixed operations over 3000 IDs, reference-model queries/filters, invariant checks and six reopen cycles |
-| `tombstones` | Exact bitmap bits, unchanged index pages, persistent state, invalid bitmap/counts, deleted payload validation and genuine v2 rejection |
-| `cli_queries` | Real process sessions, mutation/filter output, recovery, tombstone persistence and reactivation saved through EOF |
-
-The existing failure suite now injects allocation failures during UPDATE, DELETE
-and reactivation, compares closed files byte-for-byte, and exercises failed
-write/fsync after the new operations. The capacity test verifies reactivation at
-the page limit. No test uses real user databases. Test checks remain enabled in
-Release; fault injection uses Linux linker wrapping only in tests.
-
-Actual results on 2026-10-15, Arch Linux x86_64, GCC 16.2.1: **15/15 tests passed
-in Debug and 15/15 with ASan/UBSan/leak detection**, with no sanitizer findings.
-Debug and Release compiled successfully with strict warnings. The sanitizer run
-used execution outside the sandbox because its ptrace restriction prevents
-LeakSanitizer from operating. Valgrind was not run.
+Reopen the same path: `SELECT 1` returns the update; `SELECT 2` reports logical
+deletion; `INSERT 2 "José returned" 23` reactivates that slot. The reproducible
+[demo input](examples/demo.txt) also prints statistics and the tree:
 
 ```sh
-cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMINIDB_SANITIZERS=ON
-cmake --build build-sanitize
+./build/minidb fresh-demo.db < examples/demo.txt
+./build/minidb fresh-demo.db
+```
+
+`OK` acknowledges a cache change. **Check the exit status after normal `.exit` or
+EOF**, which writes dirty pages and fsyncs the file. Ctrl-C is not a normal close.
+Recoverable input/duplicate/missing/deleted errors allow later commands and can
+still produce exit 0; fatal storage/output errors return 1. `--help` opens no DB.
+For debugging: `gdb --args ./build/minidb demo.db`.
+
+## Testing
+
+```sh
+ctest --test-dir build -LE stress --output-on-failure
+ctest --test-dir build -L stress --output-on-failure
+cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DMINIDB_SANITIZERS=ON -DBUILD_TESTING=ON
+cmake --build build-sanitize -j2
 env ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-sanitize --output-on-failure
 ```
 
-For shorter iterations, `ctest --test-dir build -LE stress --output-on-failure`
-omits the 100000-row test. The existing [lookup benchmark](benchmarks/README.md)
-still builds, but its committed measurements are historical phase 3/v2 results.
-No new phase 4 performance numbers are claimed.
+Recorded on 2026-10-15: **19/19 Debug, 19/19 Release, 19/19 ASan+UBSan+LSan**,
+with no sanitizer findings. Coverage includes 10000/100000 rows in ascending,
+descending and seeded random order; a 60000-operation independent C model;
+three-level tree mutations; 50000 parser and 50000 codec mutations; and ten CLI
+processes comparing complete state against a Python model. Tests use temporary
+files. Valgrind was unavailable. See [coverage, seeds and execution evidence](docs/testing.md)
+and the [audit findings](docs/audit.md).
 
-## Debugging and limitations
+## Benchmarks
 
 ```sh
-gdb --args ./build/minidb queries.db
+./build-release/benchmark_engine > /tmp/minidb-benchmark-new.csv
+python3 benchmarks/summarize.py /tmp/minidb-benchmark-new.csv
 ```
 
-Useful breakpoints: `executor_execute`, `storage_update`, `storage_delete`,
-`modify_slot`, `pager_rollback`. Use the Debug build and `next`, `bt`, `continue`.
-VS Code can run these commands in its terminal or through a C/C++ debugger.
+Five measured trials per size after warm-up; same queries for both methods,
+alternating execution order. Median time in milliseconds per **2000 lookups**:
 
-Remaining limitations: no physical deletion/rebalancing, compaction, migration,
-WAL/recovery, concurrent access, checksums, cache replacement, full SQL, joins,
-replication or optimizer. .btree can produce large output; .stats validates the
-full structure and reports current values including pending cache changes.
+| Rows | Indexed | Sequential |
+| --- | --- | --- |
+| 1000 | 0.322252 | 1.498043 |
+| 10000 | 0.454206 | 13.297411 |
+| 50000 | 0.744984 | 140.732848 |
+| 100000 | 0.917055 | 287.190818 |
 
-Phase 4 is complete; phase 5 requires a separate instruction. No commits were
-created automatically. Suggested commit:
-`feat(query): add updates, tombstones, age filters, and structured execution results`.
+These are **preloaded-cache** measurements on an Intel i5-1235U, GCC 16.2.1,
+Release `-O3`, not disk latency. Additional experiments measure inserts, updates,
+logical deletes, reactivation, scans, age filters, open and synchronization.
+The recorded `/tmp` mount is **tmpfs**, so synchronization numbers do not measure
+SSD performance or durable transaction commits. See [methodology, dispersion,
+complexity, profiling and raw data](docs/benchmarking.md). Phase 3 measurements
+remain archived and are not directly comparable to the expanded workload.
+
+## Engineering Decisions
+
+- Explicit serialization separates portable disk fields from in-memory padding.
+- A secondary B+ tree keeps data locations stable across node splits.
+- Logical deletion avoids incomplete physical rebalance logic and preserves keys;
+  its space cost and same-ID reactivation semantics are explicit.
+- Pager before-images protect ordinary mutation failures without pretending to
+  provide crash atomicity; disk write errors poison the handle and stop retries.
+- Full validation at open prioritizes integrity and simplicity at this scale,
+  at the cost of startup work and a full-file cache.
+- Streaming structured results keep storage independent of terminal formatting.
+- Benchmarks validate results, retain raw samples and report dispersion; no
+  speculative engine microoptimization was introduced during phase 5.
+
+See [engineering log](docs/engineering-log.md) for the implementation rationale.
+
+## Known Limitations
+
+Single table, fixed schema, single-process ownership, 16 MiB file cap, no cache
+eviction or file locking. Tombstones do not recover space or securely erase data.
+No WAL, crash recovery, ACID transactions, checksums, migration, physical deletion
+with rebalancing, full SQL, joins, optimizer, replication or Oracle compatibility.
+Partial writes can leave inconsistent files; validation is not automatic repair.
+See [failure windows and precise guarantees](docs/limitations.md).
+
+## Future Work
+
+Potential separate extensions include WAL and recovery, transactional commit,
+concurrency control, a bounded buffer pool, checksums, physical deletion/compaction,
+format migration and a richer SQL/query layer. None is implemented or promised
+as part of this milestone.
+
+## License
+
+No project license has been selected and no LICENSE file is present. Public
+visibility alone would not grant an open-source license. License selection remains
+with the project owner; this validation phase does not add one.

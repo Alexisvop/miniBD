@@ -1,0 +1,9 @@
+INSERT 3 "Mariana" 25
+INSERT 1 "Alexis" 21
+INSERT 2 "José" 20
+UPDATE 1 "Alexis Perez" 22
+DELETE 2
+SELECT_ALL WHERE age >= 21
+.stats
+.btree
+.exit

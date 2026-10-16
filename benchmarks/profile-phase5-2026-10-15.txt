@@ -1,0 +1,46 @@
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total
+ time   seconds   seconds    calls  ms/call  ms/call  name
+ 60.25      6.29     6.29   144072     0.04     0.05  sequential_select
+ 19.25      8.30     2.01 57755910     0.00     0.00  record_deserialize
+  3.83      8.70     0.40 40572000     0.00     0.00  visit_record
+  3.35      9.05     0.35                             _init
+  3.26      9.39     0.34  6423000     0.00     0.00  btree_search
+  2.97      9.70     0.31 59866500     0.00     0.00  record_name_valid
+  1.34      9.84     0.14 148794144     0.00     0.00  pager_get
+  1.05      9.95     0.11   966000     0.00     0.00  insert_node
+  0.86     10.04     0.09 149874732     0.00     0.00  pager_page_count
+  0.77     10.12     0.08  4008000     0.00     0.00  storage_select
+  0.57     10.18     0.06 22868118     0.00     0.00  consume
+  0.48     10.23     0.05                             main
+  0.38     10.27     0.04 30429000     0.00     0.00  deliver_record
+  0.38     10.31     0.04  5796000     0.00     0.00  validate_entry
+  0.38     10.35     0.04     1008     0.04     2.21  btree_scan
+  0.19     10.37     0.02  2415000     0.00     0.00  pager_commit
+  0.19     10.39     0.02  2173500     0.00     0.00  record_serialize
+  0.10     10.40     0.01  4817526     0.00     0.00  pager_write
+  0.10     10.41     0.01  2127864     0.00     0.00  read_node
+  0.10     10.42     0.01  1207500     0.00     0.00  modify_slot
+  0.10     10.43     0.01      144     0.07     2.02  validate_node
+  0.10     10.44     0.01      144     0.07     3.70  validate_storage
+  0.00     10.44     0.00  2415000     0.00     0.00  pager_begin
+  0.00     10.44     0.00  1449000     0.00     0.00  read_record
+  0.00     10.44     0.00  1207500     0.00     0.00  storage_insert
+  0.00     10.44     0.00   966000     0.00     0.00  btree_insert
+  0.00     10.44     0.00   966000     0.00     0.00  storage_update
+  0.00     10.44     0.00   241500     0.00     0.00  storage_delete
+  0.00     10.44     0.00    20970     0.00     0.00  pager_allocate
+  0.00     10.44     0.00     4200     0.00     0.00  write_internal
+  0.00     10.44     0.00     1008     0.00     2.21  executor_execute
+  0.00     10.44     0.00     1008     0.00     2.21  storage_scan
+  0.00     10.44     0.00      168     0.00     0.00  pager_sync
+  0.00     10.44     0.00      144     0.00     2.02  btree_validate
+  0.00     10.44     0.00       96     0.00     0.00  pager_close
+  0.00     10.44     0.00       96     0.00     0.00  pager_open
+  0.00     10.44     0.00       96     0.00     3.70  storage_validate
+  0.00     10.44     0.00       72     0.00     0.00  storage_close
+  0.00     10.44     0.00       72     0.00     2.47  storage_open
+  0.00     10.44     0.00       48     0.00     0.00  storage_sync
+  0.00     10.44     0.00       24     0.00     0.00  btree_create

@@ -402,3 +402,98 @@ Suggested commit:
 `feat(query): add updates, tombstones, age filters, and structured execution results`.
 
 Stop after phase 4. Phase 5 requires a new user instruction.
+
+## Phase 5 — final engineering validation (2026-10-15)
+
+### Starting state and audit
+
+Started from clean commit `1766422` (`Act, Del and queries`). Read the main and
+phase 5 specifications, all production modules/headers, CMake, format/design
+notes and existing tests/benchmarks. Ran the original suite first: 15/15 Debug
+entries passed in 8.51 s. The ignored `indexed.db` was left untouched. Findings
+and severity are consolidated in [audit.md](audit.md).
+
+No engine correctness defect requiring an algorithm change was found in the
+reviewed paths. Preserve Storage, Pager, codec, Parser, Executor and B+ tree
+algorithms and disk v3. Update application/CMake labels to v0.5. Avoid a large
+refactor or speculative performance work in a validation milestone.
+
+### Implemented evidence
+
+Preserve all 15 entries and add four: input_stress, tree_mutations, mixed_stress,
+process_model. Original mixed mode retains 30000 operations/3000 IDs; the new
+mode runs 60000/10000 with 12 close/reopen cycles. Existing tree scenarios still
+cover 10000 and 100000 rows in ascending, descending and shuffled order; all
+successful/missing point lookups and complete ordered payloads are compared.
+
+The new height-3 mutation scenario starts with 100000 rows and checks 33334
+logical deletes, 13333 non-key updates and 11112 reactivations. Complete point and
+scan results match a formula model before and after reopening; pages and tree
+node counts remain unchanged. The Python dictionary oracle uses ten fresh engine
+processes: 10000 initial UTF-8 rows, four 5000-operation mutation sessions and
+five complete-state snapshots including all six predicates. A real read-only
+file-mode denial probe passed under the ordinary user. Input stress adds 50000
+seeded parser mutations and 50000 codec mutations, with failure-output preservation
+and successful canonical round trips. These bounded experiments are not exhaustive
+fuzzing or proof of correctness.
+
+### Builds and tools actually run
+
+- Debug: 19/19 CTest entries passed, 10.70 s.
+- Release: 19/19 passed, 5.53 s; both standalone benchmarks compiled.
+- ASan/UBSan/LeakSanitizer: 19/19 passed, 34.22 s, no reported findings. Executed
+  outside the tool sandbox because ptrace restrictions prevent leak detection.
+- Clean source-only copy in a temporary directory: fresh Debug/Release builds and
+  19/19 Release CTest passed; no prior build tree, Git data, local specification,
+  user DB or precompiled artifact was present. Copy/build trees were removed.
+- Strict compiler warnings remain enabled; checks are active with NDEBUG.
+- Valgrind and perf were unavailable. GNU gprof 2.47 was available and used.
+
+The 19 entries contain many assertions/scenarios; this is not an assertion count.
+Stress test runtime and memory fit the available host. The capacity suite
+intentionally reaches the configured 4096-page bound and checks controlled failure.
+
+### Benchmarks and profiling
+
+Added benchmarks/engine.c and summarize.py, independent of CTest. Four sizes
+(1000/10000/50000/100000), one complete warm-up trial then five measured trials,
+11 operations per size: 220 raw samples, 44 summary rows. Exact query comparisons,
+reference checksums, full mutation-model verification and final reopen checks
+validate results. Comparable lookup and scan/filter ordering alternates; cache
+state, units, seeds, batch sizes, timing boundaries and dispersion are explicit.
+
+On this host /tmp is tmpfs. Thus pwrite/fsync timings are real filesystem calls
+to memory, not SSD latency or a durable commit benchmark. The cached 100000-row
+lookup batch (2000 identical queries) measured medians 0.917055 ms indexed versus
+287.190818 ms sequential, with MAD 0.018260 and 4.461099 ms respectively. Preserve
+all sizes/operations in the raw CSV and summary rather than reporting only the
+favorable ratio. Historical phase 3 numbers remain intact and are not treated
+as a directly comparable regression baseline.
+
+The separate -pg profile attributes 60.25% sampled self time to benchmark-only
+sequential lookup, 19.25% to record_deserialize, then scan/search/UTF-8 work.
+The whole-harness profile includes validation and warm-up; it is not equivalent
+to timed engine-only latency. No production microoptimization was justified or
+applied. See [benchmarking.md](benchmarking.md) and the preserved flat profile.
+
+### Deliverables and handoff
+
+Rewrote README for an external reviewer with architecture, usage/build/tests,
+benchmarks, decisions, limitations, future work and license status. Added
+[testing.md](testing.md), [benchmarking.md](benchmarking.md),
+[limitations.md](limitations.md), [audit.md](audit.md), examples/demo.txt, raw and
+summary measurements and a profile. Updated architecture, format and tree notes;
+no format migration or major feature was added. Python is test/analysis-only,
+required when BUILD_TESTING is enabled; the engine has no Python dependency.
+
+All phase 5 mandatory acceptance criteria are supported by the executed evidence.
+The optional unavailable tools are explicitly reported. No CI service, remote
+configuration, license selection, repository publication, CV or application was
+created. No commits were made. The project is prepared for external technical
+review as an educational portfolio project, not production deployment. The owner
+should understand index invariants, portable encoding, tombstone semantics,
+cache-versus-durability guarantees and benchmark methodology before presenting it.
+Stop at phase 5 and await the owner's review.
+
+Suggested commit:
+`test: complete phase 5 validation, reproducible benchmarks, and portfolio docs`

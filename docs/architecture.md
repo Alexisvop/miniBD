@@ -1,4 +1,4 @@
-# Architecture through phase 4
+# Architecture through phase 5
 
 ## Layers and ownership
 
@@ -116,3 +116,13 @@ reset at open. UPDATE/DELETE/reactivation do not increment them.
 index. All-deleted databases can have zero active rows but a nonempty multilevel
 tree. Logical deletion does not reclaim disk space, rebalance nodes, erase payloads
 or compact the file. Page payload cache remains bounded at 16 MiB without eviction.
+
+
+## Phase 5 validation boundary
+
+The production ownership, query and storage architecture is unchanged. The
+application label is v0.5; the disk format remains v3. Test-only models and a
+sequential benchmark baseline live outside the engine, with no production
+fallback scan or dependency on Python. CMake separates benchmarks from CTest
+and labels longer integrity/stress scenarios. See [audit](audit.md),
+[testing](testing.md) and [benchmarking](benchmarking.md) for measured evidence.

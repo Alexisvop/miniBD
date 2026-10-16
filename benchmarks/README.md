@@ -1,10 +1,20 @@
+# Benchmark entry points
+
+The current phase 5 benchmark is `engine.c`, covering lookup, mutations, scans,
+filters, open and synchronization. See [methodology and results](../docs/benchmarking.md),
+[raw trials](results-phase5-2026-10-15.csv), [summary](summary-phase5-2026-10-15.csv)
+and [gprof profile](profile-phase5-2026-10-15.txt). `summarize.py` validates all
+44 experiment groups and reports medians, min/max and median absolute deviations.
+
+The lookup-only benchmark below is retained as historical phase 3 evidence.
+
 > The recorded measurements below are historical phase 3/v2 results, not phase 4 measurements.
 > The current benchmark builds fresh v3 databases containing only active rows; it does not measure tombstones or age filters.
 
 # Lookup benchmark
 
-Standalone cached-lookup comparison, excluded from CTest. It uses the same v2
-file and identical queries for indexed and sequential retrieval. Sequential
+Standalone cached-lookup comparison, excluded from CTest. The recorded run used
+the same v2 file and identical queries for indexed and sequential retrieval. Sequential
 lookup is implemented only in `benchmarks/lookup.c`: the phase 2 slot scan adapted
 to skip index pages, without modifying production SELECT.
 

@@ -97,7 +97,7 @@ static void print_help(FILE *output)
           "Names require double quotes; quote escaping is not supported.\n"
           "Input limit: 4096 bytes per line, excluding the newline.\n"
           "DELETE retains storage/index entries; INSERT reactivates the same deleted ID.\n"
-          "Phase 4: updates and logical deletion; changes are synchronized at normal close.\n",
+          "Phase 5: updates and logical deletion; changes are synchronized at normal close.\n",
           output);
 }
 
@@ -105,7 +105,7 @@ int repl_run(FILE *input, FILE *output, FILE *errors, bool interactive, Storage 
 {
     char line[MINIDB_INPUT_MAX_BYTES + 1U];
     if (interactive) {
-        fputs("MiniDB v0.4\nEducational Database Engine\n"
+        fputs("MiniDB v0.5\nEducational Database Engine\n"
               "Type .help for usage. Changes are saved at normal close.\n", output);
     }
     for (;;) {

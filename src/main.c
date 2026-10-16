@@ -9,7 +9,7 @@ int main(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         int result = printf("Usage: %s database.db\n"
-                            "Phase 4: persistent queries, updates and logical deletion; changes are saved at normal close.\n"
+                            "Phase 5: persistent queries, updates and logical deletion; changes are saved at normal close.\n"
                             "Use .help inside the REPL for commands.\n", argv[0]);
         return result < 0 || fflush(stdout) == EOF ? 1 : 0;
     }

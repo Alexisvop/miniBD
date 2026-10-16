@@ -1,6 +1,6 @@
-# MiniDB disk format v3 (phase 4)
+# MiniDB disk format v3 (phases 4–5)
 
-Application v0.4 uses **format version 3**. All multibyte fields are unsigned
+Applications v0.4 and v0.5 use **format version 3**. All multibyte fields are unsigned
 little-endian integers; all pages are 4096 bytes. No C structure is written
 as native memory. Record serialization remains 70 bytes, unchanged from phase 2.
 
@@ -212,3 +212,12 @@ errors. Partial writes can leave mismatched data/index pages or a tombstone bitm
 inconsistent with metadata active count; reopening then rejects the file. No
 automatic repair exists. Ctrl-C, crashes, power loss and concurrent access remain
 unsupported. Memory savepoints and fsync do not make multi-page disk writes atomic.
+
+
+## Phase 5 compatibility verification
+
+Phase 5 does not change offsets, version or serialization. The original format
+corruption suites remain, and new full-state process/model tests cover normal
+close/reopen with UTF-8 payloads, updates, tombstones and reactivation. An ignored
+user database was not opened during validation. See [testing](testing.md) for
+executed scenarios and [limitations](limitations.md) for remaining failure windows.

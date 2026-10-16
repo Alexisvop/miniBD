@@ -57,7 +57,7 @@ int main(void)
     CHECK(strstr(output, "7 | Seed | 20") != NULL);
     CHECK(errors[0] == '\0');
     run_session("", 0, true, output, errors);
-    CHECK(strstr(output, "MiniDB v0.4") != NULL);
+    CHECK(strstr(output, "MiniDB v0.5") != NULL);
     CHECK(strstr(output, "minidb> ") != NULL);
     CHECK(errors[0] == '\0');
 
