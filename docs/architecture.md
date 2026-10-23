@@ -118,6 +118,15 @@ tree. Logical deletion does not reclaim disk space, rebalance nodes, erase paylo
 or compact the file. Page payload cache remains bounded at 16 MiB without eviction.
 
 
+## Website boundary (2026-10-23)
+
+The optional [live recruiter showcase](https://minibd.pages.dev/) resides in
+`site/` and is deployed as a static React/TypeScript/Vite application. Its
+order-4 tree and query playground simulate concepts using synthetic in-browser
+data; neither calls the C17 runtime nor persists a database. Website tests and
+npm dependency checks live in `.github/workflows/site-ci.yml`. The website is
+**not** a new production layer of the database architecture diagram above.
+
 ## Phase 5 validation boundary
 
 The production ownership, query and storage architecture is unchanged. The
