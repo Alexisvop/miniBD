@@ -107,6 +107,34 @@ user database, local specification folder or prebuilt binary; it was removed
 after validation. This checks clean-source reproducibility without committing
 or publishing the working tree.
 
+## GitHub Actions and showcase verification (2026-10-23)
+
+The repository now runs two independent GitHub Actions workflows:
+
+- [MiniDB CI](../.github/workflows/ci.yml): validates the engine with Linux
+  Debug, Release and ASan/UBSan configurations, each running the **19 CTest
+  entries**, plus the tracked-file hygiene check.
+- [MiniDB Showcase CI](../.github/workflows/site-ci.yml): installs dependencies
+  with `npm ci`, runs `npm audit --audit-level=high`, executes the **three
+  Node.js tests** of the educational B+ Tree, type-checks TypeScript, builds
+  the static site and checks the generated output.
+
+Both workflows reported success on the `main` deployment merge commit
+`1216f86f1633075b37daa8f891fa9340a555793e` dated 2026-10-23. Those
+results are distinct from the original Arch Linux Phase 5 evidence above.
+No end-to-end browser test suite or independently verified live Cloudflare
+security-header result is claimed. The project owner confirmed the desktop
+showcase screenshots and that its navigation links worked.
+
+To run the website tests and build locally:
+
+```sh
+cd site
+npm ci
+npm run test
+npm run build
+```
+
 ## Maintenance
 
 CMake's clean target removes generated build products without touching sources:

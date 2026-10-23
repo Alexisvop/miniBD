@@ -150,6 +150,17 @@ record locations would matter much more. Complexity describes growth; allocation
 serialization, page copying, cache locality, clock frequency and filesystem latency
 determine real time. Logical deletion does not reduce N or H.
 
+## Portfolio chart provenance (2026-10-23)
+
+The static [MiniDB showcase](https://minibd.pages.dev/) plots the
+`indexed_lookup` and `sequential_lookup` median values from
+[summary-phase5-2026-10-15.csv](../benchmarks/summary-phase5-2026-10-15.csv)
+for **2,000 queries** at 1,000, 10,000, 50,000 and 100,000 records, with five
+trials and preloaded caches. It uses a logarithmic time axis. Selecting a
+dataset displays the ratio of the two median batch times at that size.
+These are **within-MiniDB comparisons**, not measurements against Oracle, and
+neither measures cold storage I/O. The website adds no new engine benchmarks.
+
 ## Profiling and optimization decision
 
 Neither perf nor Valgrind was installed. GNU gprof 2.47 was available. After

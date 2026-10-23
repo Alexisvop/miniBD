@@ -34,7 +34,9 @@ steps wherever possible.
   a throwaway database, not your personal data.
 - Never put Cloudflare account API tokens or other deployment credentials in
   client-side JavaScript or tracked configuration files. Use Git integration
-  for a future static showcase, or platform-managed secrets when necessary.
+  for the [published static showcase](https://minibd.pages.dev/), or
+  platform-managed secrets when necessary. The browser demo uses synthetic
+  data and must never collect real credentials or sensitive records.
 - If a real credential was pushed, **revoke or rotate it immediately**.
   Deleting the file in a later commit does not remove it from Git history.
 

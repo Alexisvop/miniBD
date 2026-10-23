@@ -2,6 +2,11 @@
 
 An interactive, static portfolio website for the [MiniDB](../README.md) C17 educational database engine.
 
+**Production website:** [https://minibd.pages.dev/](https://minibd.pages.dev/).
+The project owner confirmed its Cloudflare Pages deployment and checked desktop
+screenshots and navigation links on 2026-10-23. This does not replace an
+independent mobile, accessibility or HTTP-header audit.
+
 ## What the website shows
 
 - **Architecture explorer:** read about REPL, Parser, Executor, Storage, B+ Tree and Pager.
@@ -29,10 +34,11 @@ The tracked `package-lock.json` pins the dependency tree. CI and Cloudflare inst
 
 ## Cloudflare Pages (GitHub integration)
 
-Connect repository `Alexisvop/miniBD` under Cloudflare **Workers & Pages → Create application → Pages → Import an existing Git repository**.
+Cloudflare Pages is already connected to GitHub repository `Alexisvop/miniBD` for production deployments. The table records the deployed build configuration; use it when repairing or recreating the project, not as instructions to create a second Pages project.
 
 | Cloudflare Pages field | Value |
 | --- | --- |
+| Owner-confirmed public URL | [minibd.pages.dev](https://minibd.pages.dev/) |
 | Production branch | `main` |
 | Root directory | `site` |
 | Framework preset | React (Vite) or None |
@@ -65,4 +71,5 @@ For the actual C implementation and limits, see [MiniDB architecture](../docs/ar
 4. Verify both educational simulation disclaimers are visible.
 5. Verify no credentials or sensitive data are present in `dist`.
 6. Confirm links to the GitHub repository and benchmark CSV.
-7. Verify the Cloudflare preview before merging to `main`.
+7. For future changes, verify the Cloudflare preview **before** merging to `main` and check the production deployment **after** merging.
+8. Confirm responsive/mobile behavior and response security headers on the live site; desktop screenshots and working navigation alone are not a full audit.

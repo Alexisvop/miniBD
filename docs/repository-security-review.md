@@ -36,17 +36,33 @@ The new CI checker scans **tracked working-tree files**, not every historical
 commit. Commit author metadata remains publicly observable unless history is
 rewritten, which this review intentionally does **not** do.
 
-## Follow-up before the showcase
+## Follow-up after showcase publication
 
 1. Review commit author metadata for privacy in GitHub's web interface; change
    future `git config user.email` to the private address from GitHub Settings.
 2. Enable GitHub **Private vulnerability reporting** under the repository's
    security settings if available.
-3. Check any future website build artifacts before publishing; do not put
-   private .db data, access tokens or deployment keys in the frontend.
+3. Review each future website build before publishing; do not put private
+   .db data, access tokens or deployment keys in the frontend.
 4. Keep the website's demos clearly labeled as real browser execution,
    recorded outputs, or simulations, as appropriate.
-5. Run CI and review the PR before merging to `main`.
+5. Run CI and review each PR before merging to `main`.
 
 For engine-level guarantees, see [limitations](limitations.md). For the testing
 matrix, see [testing](testing.md).
+
+## Post-review status (2026-10-23)
+
+After the original audit, PR #2 added repository hygiene safeguards and PR #3
+added a static React/TypeScript showcase. Both were merged into `main`. The
+showcase was published at [minibd.pages.dev](https://minibd.pages.dev/), and
+the owner confirmed the displayed desktop sections and navigation links. The
+GitHub Actions workflows for the C engine and website passed on the deployment
+commit. The site uses synthetic data and labels its browser demos as
+simulations, not the actual C engine.
+
+**Still requiring a separate review:** privacy preferences for historical Git
+commit email metadata, repository vulnerability-reporting settings, live
+Cloudflare HTTP headers, and mobile/accessibility behavior. This dated
+repository scan did not inspect Cloudflare account settings or independently
+verify live response headers. See [website setup and checks](../site/README.md).
