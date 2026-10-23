@@ -2,6 +2,14 @@
 
 MiniDB is an educational single-table database engine, not an Oracle-compatible or production database. These diagrams describe **disk format v3**. For byte-exact offsets and invariants, see [storage-format.md](storage-format.md) and [btree-design.md](btree-design.md).
 
+## Interactive portfolio demonstration
+
+The public [MiniDB showcase](https://minibd.pages.dev/) offers an interactive
+architecture explorer, an **educational browser-only B+ Tree simulation**, a
+simulated command terminal and a chart of recorded benchmarks. It does **not**
+run the C17 engine or write persistent database files. The diagrams below
+explain the actual C implementation and its v3 disk layout.
+
 ## From command to disk
 
 ```mermaid
