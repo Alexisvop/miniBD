@@ -1,5 +1,9 @@
 # Phase 5 engineering audit
 
+> This is the historical **engine quality** audit from 2026-10-15. For the
+> public-repository exposure and privacy review, see
+> [repository-security-review.md](repository-security-review.md).
+
 Date: 2026-10-15. Baseline: commit `1766422` (`Act, Del and queries`), clean
 working tree before phase 5. The specification files under `recursos/` are local,
 ignored inputs; public documentation is self-contained. The user's ignored
