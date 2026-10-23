@@ -38,7 +38,7 @@ Cloudflare Pages is already connected to GitHub repository `Alexisvop/miniBD` fo
 
 | Cloudflare Pages field | Value |
 | --- | --- |
-| Project name / URL | `minibd` / [minibd.pages.dev](https://minibd.pages.dev/) |
+| Owner-confirmed public URL | [minibd.pages.dev](https://minibd.pages.dev/) |
 | Production branch | `main` |
 | Root directory | `site` |
 | Framework preset | React (Vite) or None |
