@@ -1,7 +1,8 @@
 # MiniDB
 
 [![MiniDB CI](https://github.com/Alexisvop/miniBD/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexisvop/miniBD/actions/workflows/ci.yml)
-[MIT License](LICENSE) · [Security policy](SECURITY.md) · [Visual architecture](docs/visual-guide.md)
+[![Showcase CI](https://github.com/Alexisvop/miniBD/actions/workflows/site-ci.yml/badge.svg)](https://github.com/Alexisvop/miniBD/actions/workflows/site-ci.yml)
+[Interactive showcase](https://minibd.pages.dev/) · [MIT License](LICENSE) · [Security policy](SECURITY.md) · [Visual architecture](docs/visual-guide.md)
 
 ## Overview
 
@@ -15,6 +16,21 @@ and reproducible performance experiments.
 **disk format v3**. Debug, Release and ASan/UBSan/leak-detection runs passed all
 19 Linux CTest entries in the recorded validation. These are finite test results,
 not production-readiness or crash-recovery guarantees.
+
+## Interactive showcase
+
+**Live website:** [https://minibd.pages.dev/](https://minibd.pages.dev/) —
+a static, interactive presentation for recruiters, deployed with Cloudflare Pages
+from the `site/` directory on `main` (publication confirmed by the project
+owner on 2026-10-23). The website includes an architecture explorer, an
+educational B+ Tree visualization, a command playground and published benchmark
+results.
+
+**Important:** the web visualizations are implemented in React/TypeScript and
+are **simulations**, not the actual C17 engine running in a browser. Commands
+entered on the site neither write `.db` files nor reach a database backend.
+The B+ Tree visualization intentionally uses a small order-4 tree; the real
+engine's page capacities are documented below. See the [website guide](site/README.md).
 
 ## Engineering highlights
 
