@@ -497,3 +497,29 @@ Stop at phase 5 and await the owner's review.
 
 Suggested commit:
 `test: complete phase 5 validation, reproducible benchmarks, and portfolio docs`
+
+## 2026-10-23 — GitHub release, security review and portfolio showcase
+
+This is a **post-Phase-5 release note**, not a retroactive change to the original
+2026-10-15 engineering evidence. Since Phase 5, the owner merged the public
+repository improvements, MIT license, GitHub Actions workflows and a static
+recruiter website. The C engine is still application **v0.5** with disk
+**format v3**; no new persistent-storage capabilities or ACID claims were added.
+
+- GitHub repository: [Alexisvop/miniBD](https://github.com/Alexisvop/miniBD).
+- Public portfolio website (owner-confirmed):
+  [minibd.pages.dev](https://minibd.pages.dev/).
+- Engine CI: Linux Debug, Release and ASan/UBSan, 19/19 CTest entries per job on
+  main merge commit `1216f86f1633075b37daa8f891fa9340a555793e`.
+- Website CI: reproducible npm install, npm dependency audit, three educational
+  tree tests, TypeScript and Vite build checks on the same commit.
+- The interactive tree and command terminal are **client-side educational
+  simulations**, not the C engine running in the browser. Benchmark values
+  originate from the saved Phase 5 CSV and retain warm-cache qualifications.
+
+A current repository documentation pass cross-checked the tracked files and
+all Markdown relative links, corrected a stale statement in the archived
+benchmark overview, and updated the live deployment/CI/security references.
+See [documentation status](documentation-status.md) for the review's boundaries.
+Older versioned storage files and dated phase reports remain intentionally
+historical and were not rewritten to describe v3.
