@@ -28,9 +28,9 @@ steps wherever possible.
 ## Repository and demo hygiene
 
 - Do not commit .env files, database dumps, private keys, credentials or logs.
-- Run \`python3 scripts/check_repo_hygiene.py\` before pushing changes.
+- Run `python3 scripts/check_repo_hygiene.py` before pushing changes.
 - CI runs this lightweight hygiene check; pattern matching can miss secrets.
-- For local demonstrations, use \`sh scripts/demo.sh ./build/minidb\`: this uses
+- For local demonstrations, use `sh scripts/demo.sh ./build/minidb`: this uses
   a throwaway database, not your personal data.
 - Never put Cloudflare account API tokens or other deployment credentials in
   client-side JavaScript or tracked configuration files. Use Git integration
