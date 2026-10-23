@@ -1,5 +1,8 @@
 # MiniDB
 
+[![MiniDB CI](https://github.com/Alexisvop/miniBD/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexisvop/miniBD/actions/workflows/ci.yml)
+[MIT License](LICENSE) · [Security policy](SECURITY.md) · [Visual architecture](docs/visual-guide.md)
+
 ## Overview
 
 MiniDB is an educational database engine built from scratch in **C17** to study
@@ -12,6 +15,34 @@ and reproducible performance experiments.
 **disk format v3**. Debug, Release and ASan/UBSan/leak-detection runs passed all
 19 Linux CTest entries in the recorded validation. These are finite test results,
 not production-readiness or crash-recovery guarantees.
+
+## Engineering highlights
+
+MiniDB is an educational **single-table database engine**, not an Oracle
+Database-compatible system. The repository demonstrates:
+
+- **Persistent B+ Tree indexing:** explicit 4096-byte pages, fixed-size records,
+  ordered scans, root/internal/leaf splits and structural validation.
+- **Query operations:** INSERT, ID-indexed SELECT, UPDATE, tombstone DELETE and
+  age-filtered scans. Only **ID** is indexed.
+- **Reproducibility:** 19 CTest suites, fault injection, deterministic reference
+  models, Debug/Release/sanitizer CI and documented benchmark methodology.
+- **Clear boundaries:** no multi-process safety, crash recovery, WAL, data
+  encryption, SQL parser or production security guarantees.
+
+## Quick start
+
+From a Linux checkout with a C17 compiler, CMake and Python 3.8+:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+sh scripts/demo.sh ./build/minidb
+```
+
+The demo uses a **temporary synthetic database** and reopens it to demonstrate
+persistence. For architecture and internals, continue below.
 
 ## Features
 
@@ -224,6 +255,16 @@ remain archived and are not directly comparable to the expanded workload.
   speculative engine microoptimization was introduced during phase 5.
 
 See [engineering log](docs/engineering-log.md) for the implementation rationale.
+
+## Security and responsible disclosure
+
+Do **not** store real confidential or personal data in MiniDB. It is an
+educational prototype without production-grade authentication, encryption,
+isolation or crash recovery. See the [security policy](SECURITY.md), the
+[repository exposure review](docs/repository-security-review.md) and
+[technical limitations](docs/limitations.md). The tracked-file hygiene check can
+be run with `python3 scripts/check_repo_hygiene.py`; this is not proof that no
+credential has ever appeared in Git history.
 
 ## Known Limitations
 
