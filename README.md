@@ -17,6 +17,10 @@ and reproducible performance experiments.
 19 Linux CTest entries in the recorded validation. These are finite test results,
 not production-readiness or crash-recovery guarantees.
 
+The [latest documentation consistency review](docs/documentation-status.md)
+records the verified engine version, current website status and remaining
+external validation boundaries.
+
 ## Interactive showcase
 
 **Live website:** [https://minibd.pages.dev/](https://minibd.pages.dev/) —
