@@ -1,0 +1,47 @@
+name: MiniDB Showcase CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/site-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/site-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    name: Build and test site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm ci --no-fund
+      - name: Audit dependency vulnerabilities
+        run: npm audit --audit-level=high
+      - name: Verify B+ tree visualizer
+        run: npm run test
+      - name: Type check and production build
+        run: npm run build
+      - name: Verify static output
+        run: |
+          test -s dist/index.html
+          test -s dist/_headers
+          test -f dist/favicon.svg
+          grep -q 'MiniDB' dist/index.html
