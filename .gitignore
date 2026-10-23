@@ -1,9 +1,36 @@
+# Local builds and generated artifacts
 /build*/
-*.db
-*.db-journal
-*.core
-core
 *.o
 *.a
+*.core
+core
+*.log
+*.bak
+*.zip
+__pycache__/
+*.pyc
+
+# Local databases and credentials: never commit real data/secrets
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.pem
+*.p12
+*.pfx
+*.key
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+id_rsa
+id_ed25519
+credentials.json
+service-account.json
+
+# Private project notes and website build artifacts
 /recursos/
-#!README.md
+/site/dist/
+/site/node_modules/
+/site/.wrangler/
