@@ -17,7 +17,7 @@ Requires Node.js 22+ and npm (or a Node.js version compatible with the pinned Vi
 
 ```sh
 cd site
-npm install
+npm ci
 npm run test
 npm run build
 npm run dev
@@ -25,7 +25,7 @@ npm run dev
 
 Open the local URL printed by Vite. Run `npm run preview` to inspect the production build.
 
-The dependency lockfile should be committed when preparing a final deployment. Until then, `npm install` resolves declared semver ranges and is less reproducible than `npm ci`; use GitHub CI and review dependency updates.
+The tracked `package-lock.json` pins the dependency tree. CI and Cloudflare installs should use `npm ci` to reproduce that tree; dependency advisories are checked using `npm audit` on pull requests. Review intentional dependency updates in separate commits.
 
 ## Cloudflare Pages (GitHub integration)
 
