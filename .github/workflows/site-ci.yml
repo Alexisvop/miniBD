@@ -32,15 +32,9 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
-      # Temporary one-run provenance step: collect the npm-generated lockfile
-      # to commit the exact resolved dependencies. Remove after collection.
-      - name: Emit lockfile for reproducible dependency pinning
-        run: |
-          echo MINIDB_LOCK_BEGIN
-          base64 -w0 package-lock.json
-          echo
-          echo MINIDB_LOCK_END
+        run: npm ci --no-fund
+      - name: Audit dependency vulnerabilities
+        run: npm audit --audit-level=high
       - name: Verify B+ tree visualizer
         run: npm run test
       - name: Type check and production build
