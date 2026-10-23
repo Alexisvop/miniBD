@@ -9,7 +9,7 @@ and [gprof profile](profile-phase5-2026-10-15.txt). `summarize.py` validates all
 The lookup-only benchmark below is retained as historical phase 3 evidence.
 
 > The recorded measurements below are historical phase 3/v2 results, not phase 4 measurements.
-> The current benchmark builds fresh v3 databases containing only active rows; it does not measure tombstones or age filters.
+> The **Phase 5** `benchmark_engine` runs on fresh v3 databases, then measures logical deletion, age-filtered scans and reactivation as separate workloads. The historical **Phase 3** `benchmark_lookup` below is a cached lookup-only experiment and does not measure tombstones or age filters.
 
 # Lookup benchmark
 
