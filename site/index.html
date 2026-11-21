@@ -3,16 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#07121c" />
-    <meta name="description" content="Explore MiniDB: a database engine written in C17, featuring a persistent B+ Tree, paged storage, query execution and reproducible benchmarks." />
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content="MiniDB — Database Engine From Scratch" />
-    <meta property="og:description" content="A C17 database engine, explained through interactive engineering visualizations and measured performance." />
+    <meta name="theme-color" content="#1b1d21" />
+    <meta name="color-scheme" content="dark" />
+    <title>MiniDB — a database engine you can read byte by byte</title>
+    <meta name="description" content="MiniDB is a small storage engine written from scratch in C17: 4 KB pages, a persistent B+ tree and a command prompt. See how a record is stored byte by byte, try the B+ tree and read the benchmarks." />
+    <link rel="canonical" href="https://minibd.pages.dev/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>MiniDB — Database Engine From Scratch</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://minibd.pages.dev/" />
+    <meta property="og:title" content="MiniDB — a database engine you can read byte by byte" />
+    <meta property="og:description" content="A C17 storage engine with 4 KB pages and a persistent B+ tree. Type a record and see exactly how it lands on disk." />
+    <meta property="og:image" content="https://minibd.pages.dev/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The MiniDB headline above a row of hexadecimal bytes colored by record field." />
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
     <div id="root"></div>
+    <noscript><p style="font-family: system-ui; padding: 24px; color: #ece7dc; background: #1b1d21">MiniDB's interactive demos need JavaScript. The source and documentation are at <a style="color: #ece7dc" href="https://github.com/Alexisvop/miniBD">github.com/Alexisvop/miniBD</a>.</p></noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
